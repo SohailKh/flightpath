@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun install)",
+      "Bash(bun test:*)",
+      "Bash(ANTHROPIC_API_KEY=test-key timeout 5 bun run dev:*)",
+      "Bash(curl:*)",
+      "Bash(node --version:*)",
+      "Bash(node -e:*)",
+      "Bash(lsof:*)",
+      "Bash(timeout 5 npx tsx:*)",
+      "Bash(npx tsx:*)",
+      "Bash(bun run ask:*)"
+    ]
+  }
+}

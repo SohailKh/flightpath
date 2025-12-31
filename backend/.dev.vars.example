@@ -1,0 +1,3 @@
+# Wrangler dev vars (optional)
+# Note: The Claude Agent SDK requires subprocess spawning which is not available
+# in Cloudflare Workers. Use `bun run dev` or `npm run dev` for local development.
