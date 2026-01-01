@@ -10,7 +10,10 @@
       "Bash(lsof:*)",
       "Bash(timeout 5 npx tsx:*)",
       "Bash(npx tsx:*)",
-      "Bash(bun run ask:*)"
+      "Bash(bun run ask:*)",
+      "Bash(bunx create-vite:*)",
+      "Bash(bun add:*)",
+      "Bash(bun run build:*)"
     ]
   }
 }

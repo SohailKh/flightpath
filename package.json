@@ -3,7 +3,10 @@
   "module": "index.ts",
   "type": "module",
   "scripts": {
-    "ask": "bun run index.ts --"
+    "ask": "bun run index.ts --",
+    "dev:backend": "cd backend && bun run dev",
+    "dev:ui": "cd ui && bun run dev",
+    "test": "cd backend && bun test"
   },
   "devDependencies": {
     "@types/bun": "latest"
