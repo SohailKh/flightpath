@@ -1,0 +1,16 @@
+{
+  "projectName": "shared-counter-app",
+  "requirementId": "counter-001",
+  "featureName": "Shared Counter Web App",
+  "featurePrefix": "counter",
+  "branchPrefix": "feat",
+  "primaryPlatform": "backend",
+  "platforms": {
+    "backend": {
+      "enabled": true,
+      "directory": ".",
+      "packageManager": "bun",
+      "typeCheckCommand": "bun run typecheck"
+    }
+  }
+}
