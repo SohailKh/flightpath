@@ -151,12 +151,16 @@ export async function startDevServers(
   );
 
   if (enabledPlatforms.length === 0) {
+    console.log(`[DevServer] No platforms with devCommand configured`);
     onLog?.("system", "No platforms with devCommand configured");
     return { servers, allHealthy: true, errors };
   }
 
+  console.log(`[DevServer] Starting ${enabledPlatforms.length} dev server(s)`);
+
   // Start all servers
   for (const [platformName, platformConfig] of enabledPlatforms) {
+    console.log(`[DevServer] Starting ${platformName} server...`);
     const process = startServerProcess(
       platformName,
       platformConfig,
@@ -200,9 +204,11 @@ export async function startDevServers(
     server.healthy = isHealthy;
 
     if (isHealthy) {
+      console.log(`[DevServer] ${server.platform} ready at ${server.healthCheckUrl}`);
       onLog?.(server.platform, "Server is healthy");
       onHealthy?.(server.platform);
     } else {
+      console.log(`[DevServer] ${server.platform} health check: FAILED (timeout after ${timeoutMs}ms)`);
       const error = `Health check timeout after ${timeoutMs}ms`;
       errors.push({ platform: server.platform, error });
       onError?.(server.platform, error);
@@ -212,6 +218,7 @@ export async function startDevServers(
   await Promise.all(healthCheckPromises);
 
   const allHealthy = servers.every((s) => s.healthy);
+  console.log(`[DevServer] All servers started. Healthy: ${servers.filter(s => s.healthy).length}/${servers.length}`);
 
   return { servers, allHealthy, errors };
 }
@@ -223,8 +230,11 @@ export async function stopDevServers(
   servers: ServerHandle[],
   onLog?: (platform: string, message: string) => void
 ): Promise<void> {
+  console.log(`[DevServer] Stopping ${servers.length} server(s)`);
+
   for (const server of servers) {
     if (server.process && !server.process.killed) {
+      console.log(`[DevServer] Stopping ${server.platform} server`);
       onLog?.(server.platform, `Stopping server (PID: ${server.pid})`);
 
       try {
@@ -237,11 +247,14 @@ export async function stopDevServers(
         // Force kill if still running
         if (!server.process.killed) {
           server.process.kill("SIGKILL");
+          console.log(`[DevServer] ${server.platform} force killed`);
           onLog?.(server.platform, "Force killed server");
         } else {
+          console.log(`[DevServer] ${server.platform} stopped gracefully`);
           onLog?.(server.platform, "Server stopped gracefully");
         }
       } catch (err) {
+        console.log(`[DevServer] ${server.platform} error stopping: ${err}`);
         onLog?.(server.platform, `Error stopping server: ${err}`);
       }
     }

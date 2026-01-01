@@ -3,7 +3,6 @@ import type { PipelineEvent } from "../types";
 import { sendPipelineMessage } from "../lib/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { StatusPanel } from "./StatusPanel";
 import { ActivityStream } from "./ActivityStream";
 import { ResponseLog } from "./ResponseLog";
 
@@ -78,14 +77,11 @@ export function PipelineChat({ pipelineId, events }: PipelineChatProps) {
 
   return (
     <div className="flex flex-col h-full gap-4">
-      {/* Status Panel */}
-      <StatusPanel events={events} currentPhase="qa" />
-
       {/* Side-by-side content area */}
       <div className="flex-1 flex gap-4 min-h-0">
         {/* Activity Stream - Left */}
         <div className="w-1/2">
-          <ActivityStream events={events} />
+          <ActivityStream events={events} currentPhase="qa" />
         </div>
 
         {/* Response Log - Right */}

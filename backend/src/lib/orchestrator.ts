@@ -21,7 +21,11 @@ import {
   setTargetProjectPath,
 } from "./pipeline";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+
+// Flightpath root directory - resolved at module load time so it doesn't change
+// when agents run with a different cwd (targetProjectPath)
+const FLIGHTPATH_ROOT = resolve(import.meta.dirname, "..", "..");
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -189,7 +193,6 @@ async function captureDiff(
 
     if (stdout.trim()) {
       const artifact = await saveDiff(
-        pipelineId,
         stdout,
         requirementId,
         targetProjectPath
@@ -240,11 +243,11 @@ async function initializeTargetProject(targetPath: string): Promise<void> {
   const { existsSync } = await import("node:fs");
 
   // Create target directory structure
-  const claudeDir = join(targetPath, ".claude", "features");
+  const claudeDir = join(targetPath, ".claude", "pipeline");
   await mkdir(claudeDir, { recursive: true });
 
   // Copy feature spec from flightpath to target project
-  const sourceSpec = join(process.cwd(), ".claude", "features", "feature-spec.v3.json");
+  const sourceSpec = join(FLIGHTPATH_ROOT, ".claude", "pipeline", "feature-spec.v3.json");
   const targetSpec = join(claudeDir, "feature-spec.v3.json");
 
   if (existsSync(sourceSpec)) {
@@ -260,13 +263,20 @@ async function initializeTargetProject(targetPath: string): Promise<void> {
  * Returns true if pipeline should stop
  */
 async function checkControlFlags(pipelineId: string): Promise<boolean> {
-  if (isAbortRequested(pipelineId)) {
+  const abort = isAbortRequested(pipelineId);
+  const pause = isPauseRequested(pipelineId);
+
+  if (abort || pause) {
+    console.log(`${LOG.pipeline} Control check: abort=${abort}, pause=${pause}`);
+  }
+
+  if (abort) {
     updateStatus(pipelineId, "aborted");
     appendEvent(pipelineId, "aborted", {});
     return true;
   }
 
-  if (isPauseRequested(pipelineId)) {
+  if (pause) {
     updateStatus(pipelineId, "paused");
     appendEvent(pipelineId, "paused", {});
     return true;
@@ -287,6 +297,7 @@ export async function runQAPhase(
   const pipeline = getPipeline(pipelineId);
   if (!pipeline) return;
 
+  console.log(`${LOG.qa} Starting QA phase for pipeline ${pipelineId.slice(0, 8)}`);
   appendEvent(pipelineId, "qa_started", { initialPrompt });
   updatePhase(pipelineId, { current: "qa" });
 
@@ -372,8 +383,14 @@ export async function handleUserMessage(
 
   try {
     logPhase("qa", "Continuing QA with user message", message.slice(0, 50));
-    appendEvent(pipelineId, "status_update", { action: "Processing your response...", phase: "qa" });
+    console.log(`[QA Debug] Conversation history length: ${pipeline.conversationHistory.length}`);
+    // Provide immediate feedback that the agent is working
+    appendEvent(pipelineId, "status_update", {
+      action: "Processing your response (this may take a few minutes if generating requirements)...",
+      phase: "qa"
+    });
 
+    console.log(`[QA Debug] Calling runPipelineAgentWithMessage...`);
     const result = await runPipelineAgentWithMessage(
       "feature-qa",
       message,
@@ -383,6 +400,7 @@ export async function handleUserMessage(
       50,
       toolCallbacks
     );
+    console.log(`[QA Debug] runPipelineAgentWithMessage returned, requiresUserInput=${result.requiresUserInput}`);
 
     addToConversation(pipelineId, "assistant", result.reply);
 
@@ -417,14 +435,20 @@ function isQAComplete(result: PipelineAgentResult): boolean {
   // 1. Agent explicitly stating requirements are ready
   // 2. Agent attempting to chain to feature-init
   // 3. Detection of feature-spec.v3.json being written
+  //
+  // NOTE: We do NOT use !result.requiresUserInput here because the agent may
+  // simply be making tool calls without asking questions - that doesn't mean
+  // the spec is complete. We need explicit completion signals.
 
   const reply = result.reply.toLowerCase();
-  return (
+  const isComplete = (
     reply.includes("requirements have been generated") ||
     reply.includes("use feature-init") ||
-    reply.includes("feature-spec.v3.json") ||
-    !result.requiresUserInput
+    reply.includes("feature-spec.v3.json")
   );
+
+  console.log(`${LOG.qa} Checking completion... result=${isComplete}`);
+  return isComplete;
 }
 
 /**
@@ -441,6 +465,8 @@ async function onQAComplete(
 
   // Parse requirements and project name from the feature spec
   const { requirements, projectName } = await parseRequirementsFromSpec();
+
+  console.log(`${LOG.qa} Complete. Found ${requirements.length} requirements, project: ${projectName}`);
 
   if (requirements.length === 0) {
     appendEvent(pipelineId, "pipeline_failed", {
@@ -483,9 +509,9 @@ async function parseRequirementsFromSpec(): Promise<ParsedFeatureSpec> {
     const { existsSync } = await import("node:fs");
 
     const specPath = join(
-      process.cwd(),
+      FLIGHTPATH_ROOT,
       ".claude",
-      "features",
+      "pipeline",
       "feature-spec.v3.json"
     );
 
@@ -533,6 +559,8 @@ async function runImplementationLoop(pipelineId: string): Promise<void> {
   const pipeline = getPipeline(pipelineId);
   if (!pipeline) return;
 
+  console.log(`${LOG.pipeline} Starting implementation loop: ${pipeline.requirements.length} requirements`);
+
   for (let i = 0; i < pipeline.requirements.length; i++) {
     // Check control flags at the start of each requirement
     if (await checkControlFlags(pipelineId)) {
@@ -540,6 +568,7 @@ async function runImplementationLoop(pipelineId: string): Promise<void> {
     }
 
     const requirement = pipeline.requirements[i];
+    console.log(`${LOG.pipeline} Requirement ${i + 1}/${pipeline.requirements.length}: ${requirement.title}`);
     updatePhase(pipelineId, { requirementIndex: i, retryCount: 0 });
 
     appendEvent(pipelineId, "requirement_started", {
@@ -578,12 +607,14 @@ async function runImplementationLoop(pipelineId: string): Promise<void> {
 
         if (testPassed) {
           success = true;
+          console.log(`${LOG.pipeline} Requirement ${requirement.id} completed`);
           updateRequirement(pipelineId, requirement.id, "completed");
           appendEvent(pipelineId, "requirement_completed", {
             requirementId: requirement.id,
           });
         } else {
           retryCount++;
+          console.log(`${LOG.pipeline} Retry ${retryCount}/${MAX_RETRIES} for requirement ${requirement.id}`);
           updatePhase(pipelineId, { retryCount });
 
           if (retryCount < MAX_RETRIES) {
@@ -600,8 +631,10 @@ async function runImplementationLoop(pipelineId: string): Promise<void> {
 
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
+        console.log(`${LOG.error} Requirement ${requirement.id} error: ${errorMessage.slice(0, 100)}`);
 
         if (retryCount >= MAX_RETRIES) {
+          console.log(`${LOG.pipeline} Requirement ${requirement.id} failed after ${retryCount} attempts`);
           appendEvent(pipelineId, "requirement_failed", {
             requirementId: requirement.id,
             error: errorMessage,
@@ -609,6 +642,7 @@ async function runImplementationLoop(pipelineId: string): Promise<void> {
           });
           updateRequirement(pipelineId, requirement.id, "failed");
         } else {
+          console.log(`${LOG.pipeline} Retry ${retryCount}/${MAX_RETRIES} for requirement ${requirement.id}`);
           appendEvent(pipelineId, "retry_started", {
             requirementId: requirement.id,
             attempt: retryCount + 1,
@@ -626,11 +660,14 @@ async function runImplementationLoop(pipelineId: string): Promise<void> {
   }
 
   // All requirements processed
+  const completedCount = pipeline.requirements.filter((r) => r.status === "completed").length;
+  const failedCount = pipeline.requirements.filter((r) => r.status === "failed").length;
+  console.log(`${LOG.pipeline} Implementation complete: ${completedCount}/${pipeline.requirements.length} succeeded, ${failedCount} failed`);
+
   appendEvent(pipelineId, "pipeline_completed", {
     totalRequirements: pipeline.requirements.length,
-    completed: pipeline.requirements.filter((r) => r.status === "completed")
-      .length,
-    failed: pipeline.requirements.filter((r) => r.status === "failed").length,
+    completed: completedCount,
+    failed: failedCount,
   });
   updateStatus(pipelineId, "completed");
 }
@@ -939,7 +976,6 @@ async function runTestPhase(
             });
 
             const artifact = await saveScreenshot(
-              pipelineId,
               screenshot,
               requirement.id,
               pipeline.targetProjectPath
@@ -1023,7 +1059,6 @@ Run tests and capture screenshots as evidence.`;
 
     try {
       const artifact = await saveTestResult(
-        pipelineId,
         testResult,
         requirement.id,
         pipeline.targetProjectPath
@@ -1090,6 +1125,7 @@ function determineTestResult(result: PipelineAgentResult): boolean {
     reply.includes("implementation verified") ||
     reply.includes("acceptance criteria met")
   ) {
+    console.log(`${LOG.test} Result determination: passed=true (explicit success indicator)`);
     return true;
   }
 
@@ -1100,10 +1136,12 @@ function determineTestResult(result: PipelineAgentResult): boolean {
     reply.includes("acceptance criteria not met") ||
     reply.includes("issues found")
   ) {
+    console.log(`${LOG.test} Result determination: passed=false (failure indicator found)`);
     return false;
   }
 
   // Default to passed if no clear indicator
+  console.log(`${LOG.test} Result determination: passed=true (no clear indicator, defaulting to passed)`);
   return true;
 }
 

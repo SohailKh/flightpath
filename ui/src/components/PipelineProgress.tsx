@@ -35,7 +35,7 @@ export function PipelineProgress({ pipeline }: PipelineProgressProps) {
     pipeline.status === "aborted";
 
   const getPhaseStatus = (
-    phase: PipelinePhase,
+    _phase: PipelinePhase,
     index: number
   ): "completed" | "current" | "pending" => {
     if (isTerminal && pipeline.status === "completed") {

@@ -14,7 +14,6 @@ import {
 } from "./lib/api";
 import type { Run, RunEvent, PipelineSummary } from "./types";
 import { cn } from "./lib/utils";
-import { Button } from "./components/ui/button";
 
 type AppMode = "runs" | "pipeline";
 
@@ -164,7 +163,7 @@ function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-gray-900">
@@ -309,6 +308,7 @@ function PipelineStatusBadge({
 }) {
   const colors: Record<PipelineSummary["status"], string> = {
     qa: "bg-blue-100 text-blue-700",
+    exploring: "bg-indigo-100 text-indigo-700",
     planning: "bg-purple-100 text-purple-700",
     executing: "bg-yellow-100 text-yellow-700",
     testing: "bg-cyan-100 text-cyan-700",

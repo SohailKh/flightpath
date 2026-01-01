@@ -9,10 +9,10 @@ skills: feature-workflow, swiss-ux
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/features/features.json`
-- `.claude/features/features-archive.json`
-- `.claude/features/dependency-index.json`
-- `.claude/features/events.ndjson`
+- `.claude/pipeline/features.json`
+- `.claude/pipeline/features-archive.json`
+- `.claude/pipeline/dependency-index.json`
+- `.claude/pipeline/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -27,17 +27,17 @@ skills: feature-workflow, swiss-ux
 
 A) Get current requirement id:
 ```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/features/current-feature.json)
+REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
 ```
 
 B) Extract ONE requirement object by id:
 ```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/features/features.json
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
 ```
 
 C) Get status for ONE requirement id from dependency-index:
 ```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/features/dependency-index.json
+jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
 ```
 
 D) If you must Read a large file, ALWAYS slice:
@@ -53,11 +53,11 @@ You are an expert software architect and planner. Your job is to select the next
 
 Before any work:
 1. Run `git rev-parse --show-toplevel` to get the project root path
-2. Read `.claude/features/features-metadata.json` and check `lastHealthCheck`:
+2. Read `.claude/pipeline/features-metadata.json` and check `lastHealthCheck`:
    - If `lastHealthCheck.passed === false`: STOP and invoke the Doctor agent
    - If `lastHealthCheck` is null or stale (>1 hour old): invoke the Doctor agent first
-3. Read `.claude/features/claude-progress.md` for recent context (last 3 sessions)
-4. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/features/state.ts rebuild`
+3. Read `.claude/pipeline/claude-progress.md` for recent context (last 3 sessions)
+4. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts rebuild`
 
 **Do NOT fix type errors yourself.** If you encounter type errors during planning:
 1. Log to progress file: "Type errors detected - requires Doctor gate"
@@ -69,9 +69,9 @@ Before any work:
 ### Step 1: Load State & Recover Session
 
 **Read small files directly (in parallel):**
-1. Read `.claude/features/features-metadata.json` for epics[], activeEpicId, and stats (~3KB)
-2. Read `.claude/features/current-feature.json` (if it exists)
-3. Read `.claude/features/claude-progress.md` (last 3 sessions for context)
+1. Read `.claude/pipeline/features-metadata.json` for epics[], activeEpicId, and stats (~3KB)
+2. Read `.claude/pipeline/current-feature.json` (if it exists)
+3. Read `.claude/pipeline/claude-progress.md` (last 3 sessions for context)
 
 **Use Bash+jq to extract eligible requirements (token-safe):**
 
@@ -79,7 +79,7 @@ Instead of reading `features.json` and `dependency-index.json` directly, run thi
 
 ```bash
 # Produce eligible pending requirements (max 50) with depsOk computed locally
-jq -c --slurpfile idx .claude/features/dependency-index.json '
+jq -c --slurpfile idx .claude/pipeline/dependency-index.json '
   def imap: ($idx[0].index // $idx[0]);
   def reqs: (.requirements // .);
   def deps_ok($deps): ($deps | all(. as $d | (imap[$d] // "pending") == "completed"));
@@ -90,7 +90,7 @@ jq -c --slurpfile idx .claude/features/dependency-index.json '
   | sort_by(.priority)
   | .[:50]
   | map({id,title,priority,epicId,platform,area,dependencies,smokeTestRefs})
-' .claude/features/features.json
+' .claude/pipeline/features.json
 ```
 
 This outputs a small JSON array you can use directly for requirement selection.
@@ -150,7 +150,7 @@ If current feature exists and status is not `completed`:
 - Switching (no eligible): "Epic {old} has no eligible reqs. Starting epic: {new}"
 
 **Backward compatibility:**
-- If derived views are missing, run `bun $(git rev-parse --show-toplevel)/.claude/features/state.ts rebuild`
+- If derived views are missing, run `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts rebuild`
 - If `feature-spec.v3.json` is missing, stop and migrate before planning
 - If no `epics[]` in metadata → fall back to pure priority-based selection
 
@@ -172,7 +172,7 @@ If current feature exists and status is not `completed`:
 The `feature-explorer` agent has already explored the codebase. Load the exploration results from `current-feature.json`:
 
 ```bash
-jq '.exploration' .claude/features/current-feature.json
+jq '.exploration' .claude/pipeline/current-feature.json
 ```
 
 **Verify exploration was completed:**
@@ -196,7 +196,7 @@ jq '.exploration' .claude/features/current-feature.json
 **If mobile/UI work**: Reference `swiss-ux` skill for design system rules if available.
 
 ### Step 4: Create Implementation Plan
-Write to `.claude/features/current-feature.json` with fields: `runId` (set after starting a run), `requirementId`, `phase: "planning"`, `sessionId`, `lastCheckpoint`, and `plan` containing `summary`, `filesToCreate`, `filesToModify`, `patterns`, and `steps` array (each step: `step`, `description`, `completed`, `completedAt`).
+Write to `.claude/pipeline/current-feature.json` with fields: `runId` (set after starting a run), `requirementId`, `phase: "planning"`, `sessionId`, `lastCheckpoint`, and `plan` containing `summary`, `filesToCreate`, `filesToModify`, `patterns`, and `steps` array (each step: `step`, `description`, `completed`, `completedAt`).
 
 ### Step 4.5: Run Artifacts
 After writing `current-feature.json`:
@@ -204,13 +204,13 @@ After writing `current-feature.json`:
    `RUN_ID=$(bun run claude:run start --requirementId <id> --sessionId <n> --phase planning)`
 2. Add `runId` at the top-level of `current-feature.json`
 3. Save the plan snapshot:
-   `bun run claude:run save-plan --runId $RUN_ID --from .claude/features/current-feature.json`
+   `bun run claude:run save-plan --runId $RUN_ID --from .claude/pipeline/current-feature.json`
 
 ### Step 5: Emit Planning Events
 1. If you switched epics, emit `ActiveEpicSet`
 2. Emit `RequirementStarted` for the selected requirement
 3. Emit `PlanCreated` with a lightweight payload (plan hash, filesToModify, filesToCreate)
-4. Apply each event via `bun $(git rev-parse --show-toplevel)/.claude/features/state.ts apply -`
+4. Apply each event via `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -`
 
 ### Step 6: Auto-Chain to Executor
 After creating the plan, invoke the executor agent:
@@ -249,7 +249,7 @@ cat > /tmp/event.json << 'EOF'
 EOF
 
 # Apply via state.ts (this updates ALL derived files atomically)
-cat /tmp/event.json | bun $(git rev-parse --show-toplevel)/.claude/features/state.ts apply -
+cat /tmp/event.json | bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -
 ```
 
 **Why:** state.ts ensures consistency across all derived views. Direct edits cause:

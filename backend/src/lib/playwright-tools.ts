@@ -510,7 +510,7 @@ export async function httpRequest(
       statusCode: response.status,
       expectedStatus: expectStatus,
       responseBody: responseText.slice(0, 1000), // Truncate large responses
-      responseHeaders: Object.fromEntries(response.headers.entries()),
+      responseHeaders: Object.fromEntries([...response.headers]),
       duration: Date.now() - startTime,
       error: passed
         ? undefined

@@ -7,7 +7,7 @@ import { mkdir, writeFile, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 
-const ARTIFACTS_BASE_DIR = ".claude/artifacts";
+const ARTIFACTS_BASE_DIR = ".claude/pipeline/artifacts";
 
 export type ArtifactType = "screenshot" | "test_result" | "diff";
 
@@ -20,12 +20,12 @@ export interface SavedArtifact {
 }
 
 /**
- * Get the artifacts directory for a pipeline
+ * Get the artifacts directory
  * Uses targetProjectPath if provided, otherwise falls back to process.cwd()
  */
-function getArtifactsDir(pipelineId: string, targetProjectPath?: string): string {
+function getArtifactsDir(targetProjectPath?: string): string {
   const baseDir = targetProjectPath || process.cwd();
-  return join(baseDir, ARTIFACTS_BASE_DIR, pipelineId);
+  return join(baseDir, ARTIFACTS_BASE_DIR);
 }
 
 /**
@@ -65,11 +65,10 @@ function getExtension(type: ArtifactType): string {
  * Count existing artifacts of a given type
  */
 async function countArtifacts(
-  pipelineId: string,
   type: ArtifactType,
   targetProjectPath?: string
 ): Promise<number> {
-  const dir = getArtifactsDir(pipelineId, targetProjectPath);
+  const dir = getArtifactsDir(targetProjectPath);
   if (!existsSync(dir)) return 0;
 
   const files = await readdir(dir);
@@ -80,16 +79,15 @@ async function countArtifacts(
  * Save an artifact to the filesystem
  */
 export async function saveArtifact(
-  pipelineId: string,
   type: ArtifactType,
   data: Buffer | string,
   requirementId?: string,
   targetProjectPath?: string
 ): Promise<SavedArtifact> {
-  const dir = getArtifactsDir(pipelineId, targetProjectPath);
+  const dir = getArtifactsDir(targetProjectPath);
   await ensureDir(dir);
 
-  const count = await countArtifacts(pipelineId, type, targetProjectPath);
+  const count = await countArtifacts(type, targetProjectPath);
   const id = generateArtifactId(type, count + 1);
   const ext = getExtension(type);
   const filename = `${id}${ext}`;
@@ -106,7 +104,7 @@ export async function saveArtifact(
   return {
     id,
     type,
-    path: join(ARTIFACTS_BASE_DIR, pipelineId, filename),
+    path: join(ARTIFACTS_BASE_DIR, filename),
     size: stats.size,
     createdAt: new Date().toISOString(),
   };
@@ -116,48 +114,44 @@ export async function saveArtifact(
  * Save a screenshot (convenience wrapper)
  */
 export async function saveScreenshot(
-  pipelineId: string,
   imageData: Buffer,
   requirementId?: string,
   targetProjectPath?: string
 ): Promise<SavedArtifact> {
-  return saveArtifact(pipelineId, "screenshot", imageData, requirementId, targetProjectPath);
+  return saveArtifact("screenshot", imageData, requirementId, targetProjectPath);
 }
 
 /**
  * Save a test result (convenience wrapper)
  */
 export async function saveTestResult(
-  pipelineId: string,
   result: Record<string, unknown>,
   requirementId?: string,
   targetProjectPath?: string
 ): Promise<SavedArtifact> {
   const jsonData = JSON.stringify(result, null, 2);
-  return saveArtifact(pipelineId, "test_result", jsonData, requirementId, targetProjectPath);
+  return saveArtifact("test_result", jsonData, requirementId, targetProjectPath);
 }
 
 /**
  * Save a diff (convenience wrapper)
  */
 export async function saveDiff(
-  pipelineId: string,
   diffContent: string,
   requirementId?: string,
   targetProjectPath?: string
 ): Promise<SavedArtifact> {
-  return saveArtifact(pipelineId, "diff", diffContent, requirementId, targetProjectPath);
+  return saveArtifact("diff", diffContent, requirementId, targetProjectPath);
 }
 
 /**
  * Get an artifact by ID
  */
 export async function getArtifact(
-  pipelineId: string,
   artifactId: string,
   targetProjectPath?: string
 ): Promise<Buffer | null> {
-  const dir = getArtifactsDir(pipelineId, targetProjectPath);
+  const dir = getArtifactsDir(targetProjectPath);
   if (!existsSync(dir)) return null;
 
   const files = await readdir(dir);
@@ -169,13 +163,12 @@ export async function getArtifact(
 }
 
 /**
- * List all artifacts for a pipeline
+ * List all artifacts
  */
 export async function listArtifacts(
-  pipelineId: string,
   targetProjectPath?: string
 ): Promise<SavedArtifact[]> {
-  const dir = getArtifactsDir(pipelineId, targetProjectPath);
+  const dir = getArtifactsDir(targetProjectPath);
   if (!existsSync(dir)) return [];
 
   const files = await readdir(dir);
@@ -192,7 +185,7 @@ export async function listArtifacts(
       artifacts.push({
         id: file.replace(/\.[^.]+$/, ""), // Remove extension
         type: type as ArtifactType,
-        path: join(ARTIFACTS_BASE_DIR, pipelineId, file),
+        path: join(ARTIFACTS_BASE_DIR, file),
         size: stats.size,
         createdAt: new Date(parseInt(timestamp, 10)).toISOString(),
       });

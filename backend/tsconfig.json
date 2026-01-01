@@ -9,6 +9,11 @@
       "ESNext"
     ],
     "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx"
+    "jsxImportSource": "hono/jsx",
+    "composite": true,
+    "noEmit": false,
+    "declaration": true,
+    "outDir": "./dist"
   },
+  "include": ["src"]
 }

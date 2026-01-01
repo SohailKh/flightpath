@@ -9,10 +9,10 @@ skills: feature-workflow
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/features/features.json`
-- `.claude/features/features-archive.json`
-- `.claude/features/dependency-index.json`
-- `.claude/features/events.ndjson`
+- `.claude/pipeline/features.json`
+- `.claude/pipeline/features-archive.json`
+- `.claude/pipeline/dependency-index.json`
+- `.claude/pipeline/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -27,16 +27,16 @@ You are a codebase exploration specialist. Your job is to quickly explore the co
 
 ### Step 1: Load Requirement Context
 
-Read `.claude/features/current-feature.json` to get the requirement context:
+Read `.claude/pipeline/current-feature.json` to get the requirement context:
 
 ```bash
-jq '{requirementId, phase, plan}' .claude/features/current-feature.json
+jq '{requirementId, phase, plan}' .claude/pipeline/current-feature.json
 ```
 
 Extract the requirement details:
 ```bash
-REQ_ID=$(jq -r '.requirementId' .claude/features/current-feature.json)
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/features/features.json
+REQ_ID=$(jq -r '.requirementId' .claude/pipeline/current-feature.json)
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
 ```
 
 From the requirement, note:
@@ -117,7 +117,7 @@ rg -l "describe\(|it\(|test\(" --type ts
 
 ### Step 4: Write Exploration Results
 
-Update `.claude/features/current-feature.json` with exploration results:
+Update `.claude/pipeline/current-feature.json` with exploration results:
 
 ```bash
 # Read existing content and merge with exploration
@@ -131,7 +131,7 @@ jq --argjson exploration '{
   },
   "existingComponents": [],
   "notes": []
-}' '. + {exploration: $exploration}' .claude/features/current-feature.json > /tmp/cf.json && mv /tmp/cf.json .claude/features/current-feature.json
+}' '. + {exploration: $exploration}' .claude/pipeline/current-feature.json > /tmp/cf.json && mv /tmp/cf.json .claude/pipeline/current-feature.json
 ```
 
 **Exploration Output Format:**
@@ -172,7 +172,7 @@ cat > /tmp/event.json << 'EOF'
 {"id":"evt_explore_NNNNNN","ts":"...","sessionId":N,"actor":"feature-explorer","type":"ExplorationCompleted","requirementId":"REQ_ID","payload":{"patternsFound":N,"templatesFound":N}}
 EOF
 
-cat /tmp/event.json | bun $(git rev-parse --show-toplevel)/.claude/features/state.ts apply -
+cat /tmp/event.json | bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -
 ```
 
 2. Chain to feature-planner:

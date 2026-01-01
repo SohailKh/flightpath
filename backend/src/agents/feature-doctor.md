@@ -9,10 +9,10 @@ skills: feature-workflow
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/features/features.json`
-- `.claude/features/features-archive.json`
-- `.claude/features/dependency-index.json`
-- `.claude/features/events.ndjson`
+- `.claude/pipeline/features.json`
+- `.claude/pipeline/features-archive.json`
+- `.claude/pipeline/dependency-index.json`
+- `.claude/pipeline/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -27,17 +27,17 @@ skills: feature-workflow
 
 A) Get current requirement id:
 ```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/features/current-feature.json)
+REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
 ```
 
 B) Extract ONE requirement object by id:
 ```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/features/features.json
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
 ```
 
 C) Get status for ONE requirement id from dependency-index:
 ```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/features/dependency-index.json
+jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
 ```
 
 D) If you must Read a large file, ALWAYS slice:
@@ -140,7 +140,7 @@ Emit when ALL required checks pass:
 }
 ```
 
-Apply: `cat event.json | bun $(git rev-parse --show-toplevel)/.claude/features/state.ts apply -`
+Apply: `cat event.json | bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -`
 
 ### HealthFailed
 
@@ -264,7 +264,7 @@ Read `lastSessionId` from `features-metadata.json` and increment by 1 for this s
 
 ## Progress File Format
 
-Append to `.claude/features/claude-progress.md`:
+Append to `.claude/pipeline/claude-progress.md`:
 
 ```markdown
 ## Doctor Check - {YYYY-MM-DD HH:MM}

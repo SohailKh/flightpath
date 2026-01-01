@@ -258,6 +258,7 @@ const PipelineRequestSchema = z.object({
 app.post("/api/pipelines", async (c) => {
   // Check if there's already an active pipeline
   if (hasActivePipeline()) {
+    console.log(`[API] POST /api/pipelines rejected - active pipeline exists: ${getActivePipelineId()}`);
     return c.json(
       {
         error: "A pipeline is already active",
@@ -287,6 +288,8 @@ app.post("/api/pipelines", async (c) => {
   }
 
   const { initialPrompt, targetProjectPath } = parsed.data;
+  const truncatedPrompt = initialPrompt.length > 80 ? initialPrompt.slice(0, 77) + "..." : initialPrompt;
+  console.log(`[API] POST /api/pipelines {initialPrompt: "${truncatedPrompt}"}`);
 
   // Create pipeline
   const pipeline = createPipeline(initialPrompt, targetProjectPath);
@@ -295,7 +298,7 @@ app.post("/api/pipelines", async (c) => {
   }
 
   // Start QA phase in background
-  console.log(`[API] Created pipeline ${pipeline.id}, starting QA phase...`);
+  console.log(`[API] Pipeline ${pipeline.id} created, starting QA phase...`);
   setTimeout(() => {
     runQAPhase(pipeline.id, initialPrompt, targetProjectPath).catch((err) => {
       console.error("[API] QA phase error:", err);
@@ -340,6 +343,8 @@ app.get("/api/pipelines/:id/events", async (c) => {
   if (!pipeline) {
     return c.json({ error: "Pipeline not found" }, 404);
   }
+
+  console.log(`[API] SSE connected for pipeline ${pipelineId}`);
 
   return streamSSE(c, async (stream) => {
     // 1. Send all existing events first
@@ -438,11 +443,13 @@ app.post("/api/pipelines/:id/message", async (c) => {
   }
 
   const { message } = parsed.data;
+  const truncatedMsg = message.length > 60 ? message.slice(0, 57) + "..." : message;
+  console.log(`[API] POST /api/pipelines/${pipelineId}/message: "${truncatedMsg}"`);
 
   // Handle message in background
   setTimeout(() => {
     handleUserMessage(pipelineId, message).catch((err) => {
-      console.error("Message handling error:", err);
+      console.error("[API] Message handling error:", err);
     });
   }, 0);
 
@@ -462,6 +469,7 @@ app.post("/api/pipelines/:id/pause", (c) => {
     return c.json({ error: "Pipeline already in terminal state" }, 400);
   }
 
+  console.log(`[API] POST /api/pipelines/${pipelineId}/pause`);
   const success = requestPause(pipelineId);
   return c.json({ ok: success });
 });
@@ -479,6 +487,7 @@ app.post("/api/pipelines/:id/abort", (c) => {
     return c.json({ error: "Pipeline already in terminal state" }, 400);
   }
 
+  console.log(`[API] POST /api/pipelines/${pipelineId}/abort`);
   const success = requestAbort(pipelineId);
   return c.json({ ok: success });
 });
@@ -496,12 +505,13 @@ app.post("/api/pipelines/:id/resume", async (c) => {
     return c.json({ error: "Pipeline is not paused" }, 400);
   }
 
+  console.log(`[API] POST /api/pipelines/${pipelineId}/resume`);
   resumePipelineState(pipelineId);
 
   // Resume in background
   setTimeout(() => {
     resumePipeline(pipelineId).catch((err) => {
-      console.error("Resume error:", err);
+      console.error("[API] Resume error:", err);
     });
   }, 0);
 
@@ -517,7 +527,7 @@ app.get("/api/pipelines/:id/artifacts", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  const artifacts = await listArtifacts(pipelineId);
+  const artifacts = await listArtifacts(pipeline.targetProjectPath);
   return c.json({ artifacts });
 });
 
@@ -531,13 +541,13 @@ app.get("/api/pipelines/:id/artifacts/:artifactId", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  const data = await getArtifact(pipelineId, artifactId);
+  const data = await getArtifact(artifactId, pipeline.targetProjectPath);
   if (!data) {
     return c.json({ error: "Artifact not found" }, 404);
   }
 
   const contentType = getContentType(artifactId);
-  return new Response(data, {
+  return new Response(new Uint8Array(data), {
     headers: {
       "Content-Type": contentType,
       "Content-Length": String(data.length),

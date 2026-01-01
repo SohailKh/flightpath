@@ -1,8 +1,12 @@
 import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { loadProjectConfig, generateProjectContext } from "./project-config";
+
+// Flightpath root directory - resolved at module load time so it doesn't change
+// when agents run with a different cwd (targetProjectPath)
+const FLIGHTPATH_ROOT = resolve(import.meta.dirname, "..", "..");
 import {
   initBrowser,
   closeBrowser,
@@ -111,12 +115,9 @@ async function loadAgentPrompt(
   agentName: AgentName,
   targetProjectPath?: string
 ): Promise<string> {
-  // When running from backend/, use src/agents directly
-  // When running from root, use backend/src/agents
-  let agentsDir = join(process.cwd(), "src", "agents");
-  if (!existsSync(agentsDir)) {
-    agentsDir = join(process.cwd(), "backend", "src", "agents");
-  }
+  // Use the resolved flightpath root to find agent prompts
+  // This works regardless of the current working directory
+  const agentsDir = join(FLIGHTPATH_ROOT, "src", "agents");
   const promptPath = join(agentsDir, `${agentName}.md`);
 
   if (!existsSync(promptPath)) {
@@ -148,10 +149,8 @@ async function loadAgentPrompt(
 async function parseAgentFrontmatter(
   agentName: AgentName
 ): Promise<Record<string, unknown>> {
-  let agentsDir = join(process.cwd(), "src", "agents");
-  if (!existsSync(agentsDir)) {
-    agentsDir = join(process.cwd(), "backend", "src", "agents");
-  }
+  // Use the resolved flightpath root to find agent prompts
+  const agentsDir = join(FLIGHTPATH_ROOT, "src", "agents");
   const promptPath = join(agentsDir, `${agentName}.md`);
 
   if (!existsSync(promptPath)) {
@@ -309,6 +308,8 @@ export async function createPipelineAgent(
   const effectiveModel = modelOverride || mapModelName(declaredModel);
 
   const requestId = crypto.randomUUID();
+  console.log(`[Agent] Creating ${agentName} agent (model: ${effectiveModel || "default"})`);
+
   let systemPrompt = await loadAgentPrompt(agentName, targetProjectPath);
 
   // Inject context for new projects (no target path = building from scratch)
@@ -324,7 +325,7 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
   let resultText = "";
   let requiresUserInput = false;
   let userQuestion: string | undefined;
-  let userQuestions: AskUserQuestion[] | undefined;
+  let userQuestions: AskUserQuestion[] = [];
 
   // Track tool start times for duration calculation
   const toolStartTimes = new Map<string, number>();
@@ -410,12 +411,20 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
               if (input.tool_name === "AskUserQuestion") {
                 requiresUserInput = true;
                 const toolInput = input.tool_input as { questions?: AskUserQuestion[] };
-                userQuestions = toolInput?.questions;
+                if (toolInput?.questions) {
+                  console.log(`[Agent] User input required: ${toolInput.questions.length} question(s)`);
+                  userQuestions.push(...toolInput.questions);
+                }
                 toolCalls.push({
                   name: input.tool_name,
                   args: input.tool_input,
-                  result: null,
+                  result: "Questions sent to user. Waiting for response.",
                 });
+                // Stop the agent here - don't let it continue and potentially call again
+                return {
+                  continue: false,
+                  tool_result: "Questions have been sent to the user. Please wait for their response before continuing.",
+                };
               }
             }
             return { continue: true };
@@ -445,27 +454,42 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
     },
   });
 
-  for await (const msg of q) {
-    // Handle streaming chunks if callback provided
-    if (msg.type === "assistant" && onStreamChunk) {
-      // The SDK might provide partial content
-      if ("content" in msg && typeof msg.content === "string") {
-        onStreamChunk(msg.content);
+  // Process agent messages
+  const startTime = Date.now();
+  const processAgent = async () => {
+    for await (const msg of q) {
+      // Handle streaming chunks if callback provided
+      if (msg.type === "assistant" && onStreamChunk) {
+        // The SDK might provide partial content
+        if ("content" in msg && typeof msg.content === "string") {
+          onStreamChunk(msg.content);
+        }
       }
-    }
 
-    if (msg.type === "result") {
-      const result = msg as SDKResultMessage;
-      if (result.subtype === "success") {
-        resultText = result.result;
-      } else {
-        throw new Error(
-          `Agent error: ${result.subtype}${
-            "errors" in result ? ` - ${result.errors.join(", ")}` : ""
-          }`
-        );
+      if (msg.type === "result") {
+        const result = msg as SDKResultMessage;
+        if (result.subtype === "success") {
+          resultText = result.result;
+        } else {
+          throw new Error(
+            `Agent error: ${result.subtype}${
+              "errors" in result ? ` - ${result.errors.join(", ")}` : ""
+            }`
+          );
+        }
       }
     }
+  };
+
+  // Process the agent to completion (no timeout - let it run)
+  try {
+    await processAgent();
+    const durationMs = Date.now() - startTime;
+    console.log(`[Agent] ${agentName} completed in ${durationMs}ms`);
+  } catch (err) {
+    const durationMs = Date.now() - startTime;
+    console.error(`[Agent] ${agentName} failed after ${durationMs}ms:`, err instanceof Error ? err.message : err);
+    throw err;
   }
 
   // Update conversation history with new messages

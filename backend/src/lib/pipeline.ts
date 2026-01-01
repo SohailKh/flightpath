@@ -193,6 +193,7 @@ export function createPipeline(
 ): Pipeline | null {
   // V1: Only allow one pipeline at a time
   if (activePipelineId !== null) {
+    console.log(`[Pipeline] Cannot create pipeline - one already active: ${activePipelineId}`);
     return null;
   }
 
@@ -221,6 +222,7 @@ export function createPipeline(
   subscribers.set(id, new Set());
   activePipelineId = id;
 
+  console.log(`[Pipeline] Created pipeline ${id}`);
   persistState();
   return pipeline;
 }
@@ -242,11 +244,16 @@ export function updatePhase(
   const pipeline = pipelines.get(pipelineId);
   if (!pipeline) return;
 
+  const oldPhase = pipeline.phase.current;
   pipeline.phase = { ...pipeline.phase, ...updates };
 
   // Update status based on phase
   if (updates.current && !pipeline.pauseRequested && !pipeline.abortRequested) {
     pipeline.status = updates.current;
+  }
+
+  if (updates.current && updates.current !== oldPhase) {
+    console.log(`[Pipeline] ${pipelineId.slice(0, 8)} phase: ${oldPhase} → ${updates.current}`);
   }
 
   persistState();
@@ -262,6 +269,7 @@ export function updateStatus(
   const pipeline = pipelines.get(pipelineId);
   if (!pipeline) return;
 
+  const oldStatus = pipeline.status;
   pipeline.status = status;
 
   // Clear active pipeline if terminal state
@@ -273,6 +281,10 @@ export function updateStatus(
     if (activePipelineId === pipelineId) {
       activePipelineId = null;
     }
+  }
+
+  if (status !== oldStatus) {
+    console.log(`[Pipeline] ${pipelineId.slice(0, 8)} status: ${oldStatus} → ${status}`);
   }
 
   persistState();
@@ -379,6 +391,7 @@ export function requestPause(pipelineId: string): boolean {
   const pipeline = pipelines.get(pipelineId);
   if (!pipeline) return false;
 
+  console.log(`[Pipeline] ${pipelineId.slice(0, 8)} pause requested`);
   pipeline.pauseRequested = true;
   persistState();
   return true;
@@ -391,6 +404,7 @@ export function requestAbort(pipelineId: string): boolean {
   const pipeline = pipelines.get(pipelineId);
   if (!pipeline) return false;
 
+  console.log(`[Pipeline] ${pipelineId.slice(0, 8)} abort requested`);
   pipeline.abortRequested = true;
   // Immediately update status to aborted (this also clears activePipelineId)
   updateStatus(pipelineId, "aborted");

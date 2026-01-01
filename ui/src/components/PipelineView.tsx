@@ -8,11 +8,10 @@ import {
   abortPipeline,
   resumePipeline,
 } from "../lib/api";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { PipelineChat } from "./PipelineChat";
 import { PipelineProgress } from "./PipelineProgress";
-import { StatusPanel } from "./StatusPanel";
 import { ActivityStream } from "./ActivityStream";
 import { ResponseLog } from "./ResponseLog";
 import { ArtifactPanel } from "./artifacts";
@@ -55,7 +54,7 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
           getPipeline(pipelineId).then(setPipeline).catch(console.error);
         }
       },
-      onDone: (status) => {
+      onDone: () => {
         getPipeline(pipelineId).then(setPipeline).catch(console.error);
       },
       onError: (err) => setError(err.message),
@@ -178,6 +177,7 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
 function StatusBadge({ status }: { status: PipelineStatus }) {
   const colors: Record<PipelineStatus, string> = {
     qa: "bg-blue-100 text-blue-700",
+    exploring: "bg-indigo-100 text-indigo-700",
     planning: "bg-purple-100 text-purple-700",
     executing: "bg-yellow-100 text-yellow-700",
     testing: "bg-cyan-100 text-cyan-700",
@@ -189,6 +189,7 @@ function StatusBadge({ status }: { status: PipelineStatus }) {
 
   const labels: Record<PipelineStatus, string> = {
     qa: "Q&A",
+    exploring: "Exploring",
     planning: "Planning",
     executing: "Executing",
     testing: "Testing",
@@ -219,18 +220,15 @@ function ImplementationView({
 }) {
   return (
     <div className="flex flex-col gap-4 h-full">
-      {/* Status Panel */}
-      <StatusPanel events={events} currentPhase={pipeline.phase.current} />
-
       {/* Side-by-side content area */}
       <div className="flex-1 flex gap-4 min-h-0">
         {/* Activity Stream - Left */}
-        <div className="w-1/2">
-          <ActivityStream events={events} />
+        <div className="w-1/2 h-full">
+          <ActivityStream events={events} currentPhase={pipeline.phase.current} />
         </div>
 
         {/* Response Log - Right */}
-        <div className="w-1/2">
+        <div className="w-1/2 h-full">
           <ResponseLog
             events={events}
             requirements={pipeline.requirements}
@@ -250,19 +248,3 @@ function ImplementationView({
   );
 }
 
-function RequirementStatusIcon({
-  status,
-}: {
-  status: "pending" | "in_progress" | "completed" | "failed";
-}) {
-  switch (status) {
-    case "completed":
-      return <span className="text-green-500">&#10003;</span>;
-    case "failed":
-      return <span className="text-red-500">&#10007;</span>;
-    case "in_progress":
-      return <span className="text-blue-500 animate-pulse">&#8226;</span>;
-    default:
-      return <span className="text-gray-300">&#9675;</span>;
-  }
-}

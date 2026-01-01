@@ -9,10 +9,10 @@ skills: feature-workflow
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/features/features.json`
-- `.claude/features/features-archive.json`
-- `.claude/features/dependency-index.json`
-- `.claude/features/events.ndjson`
+- `.claude/pipeline/features.json`
+- `.claude/pipeline/features-archive.json`
+- `.claude/pipeline/dependency-index.json`
+- `.claude/pipeline/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -27,17 +27,17 @@ skills: feature-workflow
 
 A) Get current requirement id:
 ```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/features/current-feature.json)
+REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
 ```
 
 B) Extract ONE requirement object by id:
 ```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/features/features.json
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
 ```
 
 C) Get status for ONE requirement id from dependency-index:
 ```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/features/dependency-index.json
+jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
 ```
 
 D) If you must Read a large file, ALWAYS slice:
@@ -54,11 +54,11 @@ You are an expert product manager and requirements engineer specializing in brea
 
 **For existing projects (when a targetProjectPath was provided):**
 1. Run `git rev-parse --show-toplevel` to get the project root path
-2. Read `.claude/features/claude-progress.md` if it exists - understand recent work
-3. Read `.claude/features/feature-spec.v3.json` if it exists - check for existing feature spec
+2. Read `.claude/pipeline/claude-progress.md` if it exists - understand recent work
+3. Read `.claude/pipeline/feature-spec.v3.json` if it exists - check for existing feature spec
 4. Check for pending requirements via jq (token-safe):
    ```bash
-   PENDING_COUNT=$(jq '(.requirements // .) | map(select(.status=="pending")) | length' .claude/features/features.json 2>/dev/null || echo 0)
+   PENDING_COUNT=$(jq '(.requirements // .) | map(select(.status=="pending")) | length' .claude/pipeline/features.json 2>/dev/null || echo 0)
    ```
 5. If a spec exists with pending requirements (`PENDING_COUNT > 0`), ask user: "There's an existing feature with {N} pending requirements. Do you want to continue that, or start a new feature?"
 6. **If resuming after questions answered:** If your conversation history shows you've already asked the user all discovery questions (Phase 1-2) and have the feature details, skip directly to Phase 4: Output Generation. Do NOT re-explore the codebase - proceed to write the JSON files immediately.
@@ -191,7 +191,7 @@ After generating requirements, analyze whether the feature needs new skills:
 
 ### Phase 4: Output Generation
 
-**Write `.claude/features/feature-spec.v3.json`:**
+**Write `.claude/pipeline/feature-spec.v3.json`:**
 ```json
 {
   "schemaVersion": 3,
@@ -230,7 +230,7 @@ After generating requirements, analyze whether the feature needs new skills:
 }
 ```
 
-**Write `.claude/features/smoke-tests.json`:**
+**Write `.claude/pipeline/smoke-tests.json`:**
 ```json
 {
   "featurePrefix": "...",
@@ -265,24 +265,13 @@ After generating requirements, analyze whether the feature needs new skills:
 - Include clear acceptance criteria for each requirement
 - List file paths that each requirement will likely touch
 
-After writing spec + smoke tests, run:
-```
-bun $(git rev-parse --show-toplevel)/.claude/features/state.ts rebuild
-```
-
 ## Output Format
 
-Provide summary with: feature name, total requirements, epics count, platforms, complexity, category breakdown. Then: "Use feature-init to initialize the feature"
-
-## Auto-Chain Flow (MANDATORY)
-
-After completing requirements generation, IMMEDIATELY invoke: `Use the feature-init agent to initialize the feature environment.`
-
-**DO NOT wait for user approval** - the autonomous pipeline handles all subsequent steps automatically.
+Provide summary with: feature name, total requirements, epics count, platforms, complexity, category breakdown. Then state: "Requirements have been generated. The pipeline will now initialize the project."
 
 ## Rules
 - Do NOT proceed to implementation - your job is only requirement gathering
-- After writing feature-spec.v3.json and smoke-tests.json, IMMEDIATELY chain to feature-init
+- After writing feature-spec.v3.json and smoke-tests.json, your job is complete
 - If requirements seem incomplete, ask more questions
 - If a feature is too large (200+ requirements), suggest breaking into sub-features
 - Always read existing feature-spec.v3.json first to avoid overwriting previous work

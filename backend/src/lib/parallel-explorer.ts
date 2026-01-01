@@ -307,8 +307,11 @@ export async function runParallelExplorers(
   const explorerTypes: ExplorerType[] = ["pattern", "api", "test"];
   const startTime = Date.now();
 
+  console.log(`[Explore] Starting parallel exploration: ${explorerTypes.join(", ")}`);
+
   // Emit start event for each explorer
   for (const type of explorerTypes) {
+    console.log(`[Explore] ${type} explorer started`);
     appendEvent(pipelineId, "explorer_started", {
       requirementId: requirement.id,
       explorerType: type,
@@ -348,6 +351,7 @@ export async function runParallelExplorers(
   // Emit completion event for each explorer
   for (const result of explorerResults) {
     if (result.error) {
+      console.log(`[Explore] ${result.type} failed: ${result.error}`);
       appendEvent(pipelineId, "explorer_error", {
         requirementId: requirement.id,
         explorerType: result.type,
@@ -355,16 +359,17 @@ export async function runParallelExplorers(
         duration: result.duration,
       });
     } else {
+      const filesCount = result.relatedFiles.templates.length +
+        result.relatedFiles.types.length +
+        result.relatedFiles.tests.length;
+      console.log(`[Explore] ${result.type} completed in ${result.duration}ms (patterns: ${result.patterns.length}, files: ${filesCount})`);
       appendEvent(pipelineId, "explorer_completed", {
         requirementId: requirement.id,
         explorerType: result.type,
         model: result.model,
         duration: result.duration,
         patternsFound: result.patterns.length,
-        filesFound:
-          result.relatedFiles.templates.length +
-          result.relatedFiles.types.length +
-          result.relatedFiles.tests.length,
+        filesFound: filesCount,
       });
     }
   }
@@ -386,6 +391,8 @@ export async function runParallelExplorers(
     merged,
     depth
   );
+
+  console.log(`[Explore] Model selected: ${selectedModel} (complexity: ${complexityScore})`);
 
   // Emit model selection event
   appendEvent(pipelineId, "model_selected", {

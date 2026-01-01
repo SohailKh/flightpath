@@ -3,6 +3,10 @@ import { Hono } from "hono";
 import { app, clearRuns, getRun } from "./index";
 import type { AgentRunner } from "./lib/agent";
 
+type TestVariables = {
+  agentRunner: AgentRunner;
+};
+
 // Mock agent runner for testing (no real API calls)
 const mockAgentRunner: AgentRunner = {
   async run(message: string) {
@@ -25,7 +29,7 @@ describe("Backend API", () => {
 
   describe("POST /api/agent", () => {
     // Create a test app with mocked agent runner
-    const testApp = new Hono();
+    const testApp = new Hono<{ Variables: TestVariables }>();
     testApp.use("/api/*", async (c, next) => {
       c.set("agentRunner", mockAgentRunner);
       await next();
@@ -39,7 +43,7 @@ describe("Backend API", () => {
         body: "invalid json{",
       });
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as { error: string };
       expect(body.error).toBe("Invalid JSON body");
     });
 
@@ -50,7 +54,7 @@ describe("Backend API", () => {
         body: JSON.stringify({}),
       });
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as { error: string };
       expect(body.error).toBe("Validation error");
     });
 
@@ -61,7 +65,7 @@ describe("Backend API", () => {
         body: JSON.stringify({ message: "" }),
       });
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as { error: string };
       expect(body.error).toBe("Validation error");
     });
 
@@ -72,7 +76,7 @@ describe("Backend API", () => {
         body: JSON.stringify({ message: "hello world" }),
       });
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = (await res.json()) as { reply: string; requestId: string };
       expect(body.reply).toBe("Mock reply to: hello world");
       expect(body.requestId).toBe("test-request-id-123");
     });
@@ -80,7 +84,7 @@ describe("Backend API", () => {
 
   describe("POST /api/runs", () => {
     // Create a test app with mocked agent runner
-    const testApp = new Hono();
+    const testApp = new Hono<{ Variables: TestVariables }>();
     testApp.use("/api/*", async (c, next) => {
       c.set("agentRunner", mockAgentRunner);
       await next();
@@ -98,7 +102,7 @@ describe("Backend API", () => {
         body: "invalid json{",
       });
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as { error: string };
       expect(body.error).toBe("Invalid JSON body");
     });
 
@@ -109,7 +113,7 @@ describe("Backend API", () => {
         body: JSON.stringify({}),
       });
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as { error: string };
       expect(body.error).toBe("Validation error");
     });
 
@@ -120,14 +124,14 @@ describe("Backend API", () => {
         body: JSON.stringify({ message: "hello world" }),
       });
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = (await res.json()) as { runId: string };
       expect(body.runId).toBeDefined();
       expect(typeof body.runId).toBe("string");
     });
   });
 
   describe("GET /api/runs/:id", () => {
-    const testApp = new Hono();
+    const testApp = new Hono<{ Variables: TestVariables }>();
     testApp.use("/api/*", async (c, next) => {
       c.set("agentRunner", mockAgentRunner);
       await next();
@@ -141,7 +145,7 @@ describe("Backend API", () => {
     it("returns 404 for non-existent run", async () => {
       const res = await testApp.request("/api/runs/non-existent-id");
       expect(res.status).toBe(404);
-      const body = await res.json();
+      const body = (await res.json()) as { error: string };
       expect(body.error).toBe("Run not found");
     });
 
@@ -152,12 +156,16 @@ describe("Backend API", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "test message" }),
       });
-      const { runId } = await createRes.json();
+      const { runId } = (await createRes.json()) as { runId: string };
 
       // Then fetch it
       const res = await testApp.request(`/api/runs/${runId}`);
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = (await res.json()) as {
+        id: string;
+        input: { message: string };
+        events: unknown[];
+      };
       expect(body.id).toBe(runId);
       expect(body.input.message).toBe("test message");
       expect(body.events.length).toBeGreaterThan(0);
@@ -165,7 +173,7 @@ describe("Backend API", () => {
   });
 
   describe("GET /api/runs/:id/events (SSE)", () => {
-    const testApp = new Hono();
+    const testApp = new Hono<{ Variables: TestVariables }>();
     testApp.use("/api/*", async (c, next) => {
       c.set("agentRunner", mockAgentRunner);
       await next();
@@ -188,7 +196,7 @@ describe("Backend API", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "test message" }),
       });
-      const { runId } = await createRes.json();
+      const { runId } = (await createRes.json()) as { runId: string };
 
       // Wait for run to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -205,7 +213,7 @@ describe("Backend API", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "hello" }),
       });
-      const { runId } = await createRes.json();
+      const { runId } = (await createRes.json()) as { runId: string };
 
       // Wait for background execution to complete
       await new Promise((resolve) => setTimeout(resolve, 100));

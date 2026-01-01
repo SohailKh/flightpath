@@ -9,10 +9,10 @@ skills: feature-workflow
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/features/features.json`
-- `.claude/features/features-archive.json`
-- `.claude/features/dependency-index.json`
-- `.claude/features/events.ndjson`
+- `.claude/pipeline/features.json`
+- `.claude/pipeline/features-archive.json`
+- `.claude/pipeline/dependency-index.json`
+- `.claude/pipeline/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -27,17 +27,17 @@ skills: feature-workflow
 
 A) Get current requirement id:
 ```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/features/current-feature.json)
+REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
 ```
 
 B) Extract ONE requirement object by id:
 ```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/features/features.json
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
 ```
 
 C) Get status for ONE requirement id from dependency-index:
 ```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/features/dependency-index.json
+jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
 ```
 
 D) If you must Read a large file, ALWAYS slice:
@@ -57,11 +57,11 @@ This agent runs with `cwd` set to the target project directory at `~/flightpath-
 
 Before any work:
 1. Run `git rev-parse --show-toplevel` to get the project root path
-2. Check if `.claude/features/features-metadata.json` exists:
+2. Check if `.claude/pipeline/features-metadata.json` exists:
    - If yes, check `lastHealthCheck.passed === true` (or invoke Doctor if stale/failed)
    - If no (fresh feature), the Doctor should have been run before Init
-3. Read `.claude/features/claude-progress.md` for recent session context (if it exists)
-4. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/features/state.ts rebuild`
+3. Read `.claude/pipeline/claude-progress.md` for recent session context (if it exists)
+4. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts rebuild`
 
 **Do NOT fix type errors yourself.** If you encounter type errors:
 1. Log to progress file: "Type errors detected - requires Doctor gate"
@@ -114,15 +114,15 @@ Before any work:
 
 4. **Create the .claude directory structure:**
    ```bash
-   mkdir -p .claude/features
-   mkdir -p .claude/artifacts
+   mkdir -p .claude/pipeline
+   mkdir -p .claude/pipeline/artifacts
    ```
 
 ### Step 1: Analyze Features
 
 **Read from source of truth:**
-1. Read `.claude/features/feature-spec.v3.json`
-2. Read `.claude/features/features-metadata.json` (derived) for stats if present
+1. Read `.claude/pipeline/feature-spec.v3.json`
+2. Read `.claude/pipeline/features-metadata.json` (derived) for stats if present
 3. Extract `featureName` and determine `featurePrefix` (first word, lowercase, e.g., "auth", "nav")
 4. Use the feature prefix automatically (no confirmation needed)
 5. Determine primary platform automatically (if spec omits it, default to "mobile" on ties)
@@ -141,7 +141,7 @@ Use the **Branch Prefix** from the Project Context section above.
 
 ### Step 3: Generate init.sh Script
 
-Create `.claude/features/init.sh` with conditional setup for each enabled platform from Project Context:
+Create `.claude/pipeline/init.sh` with conditional setup for each enabled platform from Project Context:
 - For each platform, add install and type check commands based on the platform's `packageManager` and `typeCheckCommand`
 - Example: `cd {platform.directory} && {packageManager} install && {typeCheckCommand}`
 
@@ -159,7 +159,7 @@ Create an event JSON and apply it via the state engine:
   "payload": {
     "baseBranch": "main",
     "featureBranch": "{branchPrefix}/{feature-prefix}-{YYYYMMDD}",
-    "initScript": ".claude/features/init.sh",
+    "initScript": ".claude/pipeline/init.sh",
     "primaryPlatform": "{from Project Context defaults}"
   }
 }
@@ -167,7 +167,7 @@ Create an event JSON and apply it via the state engine:
 
 Apply:
 ```
-cat event.json | bun $(git rev-parse --show-toplevel)/.claude/features/state.ts apply -
+cat event.json | bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -
 ```
 
 ### Step 5: Initial Git Commit
