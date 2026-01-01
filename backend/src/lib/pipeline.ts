@@ -2,12 +2,16 @@
  * Pipeline session model for multi-step agent orchestration.
  * Manages the full workflow: QA → Plan → Execute → Test loop.
  * In-memory store with pub/sub for SSE streaming.
+ * Persists state to JSON for recovery across restarts.
  */
 
-export type PipelinePhase = "qa" | "planning" | "executing" | "testing";
+import { loadFromFile, saveToFile, clearFile } from "./persistence";
+
+export type PipelinePhase = "qa" | "exploring" | "planning" | "executing" | "testing";
 
 export type PipelineStatus =
   | "qa"
+  | "exploring"
   | "planning"
   | "executing"
   | "testing"
@@ -20,6 +24,8 @@ export type PipelineEventType =
   // Phase transitions
   | "qa_started"
   | "qa_completed"
+  | "exploring_started"
+  | "exploring_completed"
   | "planning_started"
   | "planning_completed"
   | "executing_started"
@@ -30,6 +36,8 @@ export type PipelineEventType =
   | "agent_message"
   | "user_message"
   | "requirements_ready"
+  // Project setup
+  | "target_project_set"
   // Progress
   | "requirement_started"
   | "requirement_completed"
@@ -38,6 +46,13 @@ export type PipelineEventType =
   | "test_passed"
   | "test_failed"
   | "screenshot_captured"
+  // Server management
+  | "server_starting"
+  | "server_healthy"
+  | "server_error"
+  | "server_warning"
+  | "servers_ready"
+  | "servers_stopped"
   // Control
   | "retry_started"
   | "paused"
@@ -45,7 +60,19 @@ export type PipelineEventType =
   | "aborted"
   // Terminal
   | "pipeline_completed"
-  | "pipeline_failed";
+  | "pipeline_failed"
+  // Tool activity (for verbose logging)
+  | "tool_started"
+  | "tool_completed"
+  | "tool_error"
+  | "status_update"
+  // Parallel exploration
+  | "parallel_exploration_started"
+  | "parallel_exploration_completed"
+  | "explorer_started"
+  | "explorer_completed"
+  | "explorer_error"
+  | "model_selected";
 
 export interface PipelineEvent {
   ts: string;
@@ -92,9 +119,19 @@ export interface Pipeline {
   abortRequested: boolean;
   // Conversation history for QA phase
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  // Target project path (where generated code goes)
+  targetProjectPath?: string;
 }
 
 type EventSubscriber = (event: PipelineEvent) => void;
+
+const PIPELINES_FILE = "pipelines.json";
+
+// Persisted state structure
+interface PersistedState {
+  pipelines: Array<[string, Pipeline]>;
+  activePipelineId: string | null;
+}
 
 // In-memory stores
 const pipelines = new Map<string, Pipeline>();
@@ -102,6 +139,36 @@ const subscribers = new Map<string, Set<EventSubscriber>>();
 
 // Global lock for single-pipeline mode (V1)
 let activePipelineId: string | null = null;
+
+/**
+ * Save current state to disk
+ */
+function persistState(): void {
+  const state: PersistedState = {
+    pipelines: Array.from(pipelines.entries()),
+    activePipelineId,
+  };
+  saveToFile(PIPELINES_FILE, state);
+}
+
+/**
+ * Load state from disk on startup
+ */
+function loadPersistedState(): void {
+  const state = loadFromFile<PersistedState>(PIPELINES_FILE);
+  if (state) {
+    pipelines.clear();
+    for (const [id, pipeline] of state.pipelines) {
+      pipelines.set(id, pipeline);
+      subscribers.set(id, new Set());
+    }
+    activePipelineId = state.activePipelineId;
+    console.log(`Loaded ${pipelines.size} pipeline(s) from disk`);
+  }
+}
+
+// Load persisted state on module initialization
+loadPersistedState();
 
 /**
  * Check if a pipeline is currently active
@@ -120,7 +187,10 @@ export function getActivePipelineId(): string | null {
 /**
  * Create a new pipeline in "qa" status
  */
-export function createPipeline(initialPrompt: string): Pipeline | null {
+export function createPipeline(
+  initialPrompt: string,
+  targetProjectPath?: string
+): Pipeline | null {
   // V1: Only allow one pipeline at a time
   if (activePipelineId !== null) {
     return null;
@@ -144,12 +214,14 @@ export function createPipeline(initialPrompt: string): Pipeline | null {
     pauseRequested: false,
     abortRequested: false,
     conversationHistory: [],
+    targetProjectPath,
   };
 
   pipelines.set(id, pipeline);
   subscribers.set(id, new Set());
   activePipelineId = id;
 
+  persistState();
   return pipeline;
 }
 
@@ -176,6 +248,8 @@ export function updatePhase(
   if (updates.current && !pipeline.pauseRequested && !pipeline.abortRequested) {
     pipeline.status = updates.current;
   }
+
+  persistState();
 }
 
 /**
@@ -200,6 +274,8 @@ export function updateStatus(
       activePipelineId = null;
     }
   }
+
+  persistState();
 }
 
 /**
@@ -214,6 +290,8 @@ export function setRequirements(
 
   pipeline.requirements = requirements;
   pipeline.phase.totalRequirements = requirements.length;
+
+  persistState();
 }
 
 /**
@@ -230,7 +308,22 @@ export function updateRequirement(
   const req = pipeline.requirements.find((r) => r.id === requirementId);
   if (req) {
     req.status = status;
+    persistState();
   }
+}
+
+/**
+ * Set the target project path (where generated code will be written)
+ */
+export function setTargetProjectPath(
+  pipelineId: string,
+  targetPath: string
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.targetProjectPath = targetPath;
+  persistState();
 }
 
 /**
@@ -245,6 +338,7 @@ export function addToConversation(
   if (!pipeline) return;
 
   pipeline.conversationHistory.push({ role, content });
+  persistState();
 }
 
 /**
@@ -261,6 +355,7 @@ export function addArtifact(
     ...artifact,
     createdAt: new Date().toISOString(),
   });
+  persistState();
 }
 
 /**
@@ -274,6 +369,7 @@ export function setCurrentRunId(
   if (!pipeline) return;
 
   pipeline.currentRunId = runId;
+  persistState();
 }
 
 /**
@@ -284,17 +380,20 @@ export function requestPause(pipelineId: string): boolean {
   if (!pipeline) return false;
 
   pipeline.pauseRequested = true;
+  persistState();
   return true;
 }
 
 /**
- * Request abort
+ * Request abort - immediately marks pipeline as aborted and clears active state
  */
 export function requestAbort(pipelineId: string): boolean {
   const pipeline = pipelines.get(pipelineId);
   if (!pipeline) return false;
 
   pipeline.abortRequested = true;
+  // Immediately update status to aborted (this also clears activePipelineId)
+  updateStatus(pipelineId, "aborted");
   return true;
 }
 
@@ -307,6 +406,7 @@ export function resume(pipelineId: string): boolean {
 
   pipeline.pauseRequested = false;
   pipeline.status = pipeline.phase.current;
+  persistState();
   return true;
 }
 
@@ -344,6 +444,7 @@ export function appendEvent(
   };
 
   pipeline.events.push(event);
+  persistState();
 
   // Notify all subscribers
   const pipelineSubscribers = subscribers.get(pipelineId);
@@ -397,6 +498,7 @@ export function clearPipelines(): void {
   pipelines.clear();
   subscribers.clear();
   activePipelineId = null;
+  clearFile(PIPELINES_FILE);
 }
 
 /**

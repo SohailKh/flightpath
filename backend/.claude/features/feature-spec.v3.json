@@ -1,0 +1,1045 @@
+{
+  "schemaVersion": 3,
+  "featureName": "Random Number Tap Game",
+  "featurePrefix": "tap",
+  "createdAt": "2024-12-31T00:00:00Z",
+  "primaryPlatform": "mobile",
+  "generatedSkills": [],
+  "epics": [
+    {
+      "id": "epic-onboarding",
+      "title": "Onboarding & Setup",
+      "goal": "Get users into the app with a username",
+      "priority": 1,
+      "definitionOfDone": "User can complete onboarding and reach home screen",
+      "keyScreens": ["OnboardingScreen", "UsernameScreen", "HomeScreen"],
+      "smokeTestIds": ["smoke-001", "smoke-002"]
+    },
+    {
+      "id": "epic-rooms",
+      "title": "Room Management",
+      "goal": "Create, join, and manage public/private rooms",
+      "priority": 2,
+      "definitionOfDone": "Users can create and join both public and private rooms",
+      "keyScreens": ["RoomListScreen", "CreateRoomScreen", "JoinRoomScreen"],
+      "smokeTestIds": ["smoke-003", "smoke-004", "smoke-005"]
+    },
+    {
+      "id": "epic-gameplay",
+      "title": "Core Gameplay",
+      "goal": "Tap button to change number with real-time sync",
+      "priority": 3,
+      "definitionOfDone": "Multiple users can tap and see real-time number changes",
+      "keyScreens": ["GameRoomScreen"],
+      "smokeTestIds": ["smoke-006", "smoke-007"]
+    },
+    {
+      "id": "epic-social",
+      "title": "Social Features",
+      "goal": "Activity feed and user presence",
+      "priority": 4,
+      "definitionOfDone": "Users can see activity feed and who's online",
+      "keyScreens": ["GameRoomScreen", "ActivityFeedScreen"],
+      "smokeTestIds": ["smoke-008"]
+    },
+    {
+      "id": "epic-stats",
+      "title": "Statistics & Leaderboards",
+      "goal": "Track and display user statistics",
+      "priority": 5,
+      "definitionOfDone": "Global leaderboard shows top tappers",
+      "keyScreens": ["LeaderboardScreen", "ProfileScreen"],
+      "smokeTestIds": ["smoke-009"]
+    }
+  ],
+  "requirements": [
+    {
+      "id": "tap-001",
+      "epicId": "epic-onboarding",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-001"],
+      "platform": "mobile",
+      "priority": 1,
+      "dependencies": [],
+      "title": "Create onboarding welcome screen",
+      "description": "Build the first onboarding screen with app logo, title, and brief description of the game concept",
+      "acceptanceCriteria": [
+        "Shows app logo and title",
+        "Displays brief description: 'Tap to change the number for everyone!'",
+        "Has 'Next' button to proceed",
+        "Includes page indicator (1 of 3)"
+      ],
+      "files": ["mobile/screens/OnboardingScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-002",
+      "epicId": "epic-onboarding",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-001"],
+      "platform": "mobile",
+      "priority": 2,
+      "dependencies": ["tap-001"],
+      "title": "Create how-to-play onboarding screen",
+      "description": "Second onboarding screen explaining game mechanics with visual examples",
+      "acceptanceCriteria": [
+        "Shows tap button mockup",
+        "Explains real-time number changes",
+        "Mentions room concept",
+        "Has 'Next' button and page indicator (2 of 3)"
+      ],
+      "files": ["mobile/screens/OnboardingScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-003",
+      "epicId": "epic-onboarding",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-001"],
+      "platform": "mobile",
+      "priority": 3,
+      "dependencies": ["tap-002"],
+      "title": "Create features overview screen",
+      "description": "Third onboarding screen highlighting key features like rooms and leaderboards",
+      "acceptanceCriteria": [
+        "Shows room types (public/private)",
+        "Mentions activity feed",
+        "Shows leaderboard preview",
+        "Has 'Get Started' button and page indicator (3 of 3)"
+      ],
+      "files": ["mobile/screens/OnboardingScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-004",
+      "epicId": "epic-onboarding",
+      "area": "mobile-nav",
+      "smokeTestRefs": ["smoke-001", "smoke-002"],
+      "platform": "mobile",
+      "priority": 4,
+      "dependencies": ["tap-001"],
+      "title": "Implement onboarding navigation flow",
+      "description": "Set up navigation between onboarding screens with swipe gestures",
+      "acceptanceCriteria": [
+        "Users can swipe between screens",
+        "Back button works on Android",
+        "Skip button available on all screens",
+        "Navigates to username screen after completion"
+      ],
+      "files": ["mobile/navigation/OnboardingNavigator.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-005",
+      "epicId": "epic-onboarding",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-002"],
+      "platform": "mobile",
+      "priority": 5,
+      "dependencies": ["tap-004"],
+      "title": "Create username selection screen",
+      "description": "Screen for users to set their initial username",
+      "acceptanceCriteria": [
+        "Text input for username (3-20 characters)",
+        "Shows validation errors for invalid names",
+        "Continue button disabled until valid username",
+        "Explains username is per-room"
+      ],
+      "files": ["mobile/screens/UsernameScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-006",
+      "epicId": "epic-onboarding",
+      "area": "mobile-state",
+      "smokeTestRefs": ["smoke-001", "smoke-002"],
+      "platform": "mobile",
+      "priority": 6,
+      "dependencies": ["tap-005"],
+      "title": "Implement onboarding state management",
+      "description": "Store onboarding completion and default username in local storage",
+      "acceptanceCriteria": [
+        "Saves onboarding completion status",
+        "Stores default username",
+        "Skip onboarding on subsequent launches",
+        "Can reset from settings later"
+      ],
+      "files": ["mobile/stores/UserStore.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-007",
+      "epicId": "epic-rooms",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-002", "smoke-003"],
+      "platform": "mobile",
+      "priority": 7,
+      "dependencies": ["tap-006"],
+      "title": "Create home/room list screen",
+      "description": "Main screen showing available rooms and navigation options",
+      "acceptanceCriteria": [
+        "Tab bar with Public/Private/Favorites",
+        "Shows list of rooms with current number and user count",
+        "Create room floating action button",
+        "Pull to refresh functionality"
+      ],
+      "files": ["mobile/screens/HomeScreen.tsx", "mobile/screens/RoomListScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-008",
+      "epicId": "epic-rooms",
+      "area": "backend-db",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 8,
+      "dependencies": [],
+      "title": "Design room database schema",
+      "description": "Create database tables for rooms with public/private support",
+      "acceptanceCriteria": [
+        "Rooms table with id, name, is_private, current_number, created_at",
+        "Support for room codes/links",
+        "Indexes for efficient queries",
+        "Auto-delete trigger for empty rooms"
+      ],
+      "files": ["backend/db/schema.sql", "backend/models/Room.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-009",
+      "epicId": "epic-rooms",
+      "area": "backend-routes",
+      "smokeTestRefs": ["smoke-003"],
+      "platform": "backend",
+      "priority": 9,
+      "dependencies": ["tap-008"],
+      "title": "Create room CRUD API endpoints",
+      "description": "RESTful API endpoints for room operations",
+      "acceptanceCriteria": [
+        "POST /rooms - create new room",
+        "GET /rooms/public - list public rooms",
+        "GET /rooms/:id - get room details",
+        "DELETE /rooms/:id - soft delete room"
+      ],
+      "files": ["backend/routes/rooms.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-010",
+      "epicId": "epic-rooms",
+      "area": "shared-contracts",
+      "smokeTestRefs": [],
+      "platform": "both",
+      "priority": 10,
+      "dependencies": ["tap-009"],
+      "title": "Define room TypeScript interfaces",
+      "description": "Shared type definitions for rooms across mobile and backend",
+      "acceptanceCriteria": [
+        "Room interface with all properties",
+        "RoomType enum (public/private)",
+        "CreateRoomRequest/Response types",
+        "Validation schemas"
+      ],
+      "files": ["shared/types/room.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-011",
+      "epicId": "epic-rooms",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-004"],
+      "platform": "mobile",
+      "priority": 11,
+      "dependencies": ["tap-007"],
+      "title": "Create room creation modal",
+      "description": "Modal/screen for creating new public or private rooms",
+      "acceptanceCriteria": [
+        "Room name input (3-30 characters)",
+        "Public/Private toggle switch",
+        "Validation messages",
+        "Create button with loading state"
+      ],
+      "files": ["mobile/screens/CreateRoomScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-012",
+      "epicId": "epic-rooms",
+      "area": "mobile-state",
+      "smokeTestRefs": ["smoke-003", "smoke-004"],
+      "platform": "mobile",
+      "priority": 12,
+      "dependencies": ["tap-010", "tap-011"],
+      "title": "Implement room API integration",
+      "description": "Connect mobile app to room backend APIs",
+      "acceptanceCriteria": [
+        "Fetch public rooms with pagination",
+        "Create new room functionality",
+        "Handle API errors gracefully",
+        "Update room list after creation"
+      ],
+      "files": ["mobile/api/rooms.ts", "mobile/stores/RoomStore.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-013",
+      "epicId": "epic-rooms",
+      "area": "backend-routes",
+      "smokeTestRefs": ["smoke-005"],
+      "platform": "backend",
+      "priority": 13,
+      "dependencies": ["tap-009"],
+      "title": "Implement private room join logic",
+      "description": "API endpoint for joining private rooms via link/code",
+      "acceptanceCriteria": [
+        "POST /rooms/:code/join endpoint",
+        "Validate room exists and is private",
+        "Generate unique shareable codes",
+        "Return room details on success"
+      ],
+      "files": ["backend/routes/rooms.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-014",
+      "epicId": "epic-rooms",
+      "area": "mobile-nav",
+      "smokeTestRefs": ["smoke-005"],
+      "platform": "mobile",
+      "priority": 14,
+      "dependencies": ["tap-012"],
+      "title": "Handle deep links for private rooms",
+      "description": "Support joining private rooms via shared links",
+      "acceptanceCriteria": [
+        "Register deep link schema",
+        "Parse room codes from URLs",
+        "Navigate to join confirmation screen",
+        "Handle invalid/expired links"
+      ],
+      "files": ["mobile/navigation/DeepLinkHandler.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-015",
+      "epicId": "epic-rooms",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-005"],
+      "platform": "mobile",
+      "priority": 15,
+      "dependencies": ["tap-014"],
+      "title": "Create join private room screen",
+      "description": "Confirmation screen when joining via link",
+      "acceptanceCriteria": [
+        "Shows room name and current number",
+        "Username input for this room",
+        "Join button with loading state",
+        "Back to home option"
+      ],
+      "files": ["mobile/screens/JoinRoomScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-016",
+      "epicId": "epic-gameplay",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 16,
+      "dependencies": ["tap-008"],
+      "title": "Set up WebSocket server infrastructure",
+      "description": "Configure WebSocket server for real-time communication",
+      "acceptanceCriteria": [
+        "WebSocket server running alongside HTTP",
+        "Connection authentication",
+        "Room-based channel management",
+        "Heartbeat/ping-pong for connection health"
+      ],
+      "files": ["backend/websocket/server.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-017",
+      "epicId": "epic-gameplay",
+      "area": "backend-routes",
+      "smokeTestRefs": ["smoke-006"],
+      "platform": "backend",
+      "priority": 17,
+      "dependencies": ["tap-016"],
+      "title": "Implement real-time tap handling",
+      "description": "WebSocket message handlers for tap events",
+      "acceptanceCriteria": [
+        "Receive tap message from client",
+        "Generate random number 1-1,000,000",
+        "Broadcast to all room participants",
+        "Update room's current_number in database"
+      ],
+      "files": ["backend/websocket/handlers/tap.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-018",
+      "epicId": "epic-gameplay",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-006", "smoke-007"],
+      "platform": "mobile",
+      "priority": 18,
+      "dependencies": ["tap-015"],
+      "title": "Create main game room screen",
+      "description": "The core gameplay screen with tap button and number display",
+      "acceptanceCriteria": [
+        "Large number display in center",
+        "Prominent tap button below",
+        "Room name in header",
+        "User count indicator"
+      ],
+      "files": ["mobile/screens/GameRoomScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-019",
+      "epicId": "epic-gameplay",
+      "area": "mobile-state",
+      "smokeTestRefs": ["smoke-006", "smoke-007"],
+      "platform": "mobile",
+      "priority": 19,
+      "dependencies": ["tap-017", "tap-018"],
+      "title": "Implement WebSocket connection management",
+      "description": "Handle WebSocket lifecycle in React Native",
+      "acceptanceCriteria": [
+        "Connect on room join",
+        "Auto-reconnect on disconnect",
+        "Handle connection states (connecting, connected, error)",
+        "Clean disconnect on room leave"
+      ],
+      "files": ["mobile/api/websocket.ts", "mobile/stores/GameStore.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-020",
+      "epicId": "epic-gameplay",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-006"],
+      "platform": "mobile",
+      "priority": 20,
+      "dependencies": ["tap-019"],
+      "title": "Add tap button interaction and animation",
+      "description": "Implement tap button with visual feedback and sound",
+      "acceptanceCriteria": [
+        "Button scales on press",
+        "Play tap sound effect",
+        "Disable during send animation",
+        "Haptic feedback on tap"
+      ],
+      "files": ["mobile/components/TapButton.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-021",
+      "epicId": "epic-gameplay",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-007"],
+      "platform": "mobile",
+      "priority": 21,
+      "dependencies": ["tap-020"],
+      "title": "Animate number changes",
+      "description": "Smooth animations when number updates",
+      "acceptanceCriteria": [
+        "Number counts up/down smoothly",
+        "Flash or pulse on change",
+        "Different animation for own vs others' taps",
+        "Performance optimized for rapid changes"
+      ],
+      "files": ["mobile/components/AnimatedNumber.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-022",
+      "epicId": "epic-gameplay",
+      "area": "backend-db",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 22,
+      "dependencies": ["tap-017"],
+      "title": "Track tap events in database",
+      "description": "Store tap history for activity feed and stats",
+      "acceptanceCriteria": [
+        "Taps table with user, room, timestamp, number",
+        "Efficient indexes for queries",
+        "Automatic cleanup of old data",
+        "Aggregate stats views"
+      ],
+      "files": ["backend/db/schema.sql", "backend/models/Tap.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-023",
+      "epicId": "epic-social",
+      "area": "backend-routes",
+      "smokeTestRefs": ["smoke-008"],
+      "platform": "backend",
+      "priority": 23,
+      "dependencies": ["tap-022"],
+      "title": "Create activity feed API",
+      "description": "API endpoint for fetching room activity",
+      "acceptanceCriteria": [
+        "GET /rooms/:id/activity endpoint",
+        "Return last 50 events with rate limiting",
+        "Aggregate rapid taps from same user",
+        "Include timestamp and username"
+      ],
+      "files": ["backend/routes/activity.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-024",
+      "epicId": "epic-social",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-008"],
+      "platform": "mobile",
+      "priority": 24,
+      "dependencies": ["tap-018"],
+      "title": "Add activity feed to game room",
+      "description": "Scrollable feed showing recent tap activity",
+      "acceptanceCriteria": [
+        "Collapsible feed panel",
+        "Shows 'User tapped → 123,456' entries",
+        "Auto-scroll to newest",
+        "Rate limit display for spam"
+      ],
+      "files": ["mobile/components/ActivityFeed.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-025",
+      "epicId": "epic-social",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 25,
+      "dependencies": ["tap-016"],
+      "title": "Implement user presence tracking",
+      "description": "Track online users per room",
+      "acceptanceCriteria": [
+        "Track WebSocket connections per room",
+        "Broadcast user join/leave events",
+        "Handle unexpected disconnects",
+        "Periodic presence updates"
+      ],
+      "files": ["backend/websocket/presence.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-026",
+      "epicId": "epic-social",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-008"],
+      "platform": "mobile",
+      "priority": 26,
+      "dependencies": ["tap-025"],
+      "title": "Display online users list",
+      "description": "Show who's currently in the room",
+      "acceptanceCriteria": [
+        "User avatars/initials in header",
+        "Animate user join/leave",
+        "Show user count if > 5 users",
+        "Tap to see full list"
+      ],
+      "files": ["mobile/components/OnlineUsers.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-027",
+      "epicId": "epic-stats",
+      "area": "backend-routes",
+      "smokeTestRefs": ["smoke-009"],
+      "platform": "backend",
+      "priority": 27,
+      "dependencies": ["tap-022"],
+      "title": "Create leaderboard API endpoints",
+      "description": "APIs for global and room-specific leaderboards",
+      "acceptanceCriteria": [
+        "GET /leaderboard/global - top 100 tappers",
+        "GET /leaderboard/room/:id - room leaders",
+        "Include tap count and last active",
+        "Cache for performance"
+      ],
+      "files": ["backend/routes/leaderboard.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-028",
+      "epicId": "epic-stats",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-009"],
+      "platform": "mobile",
+      "priority": 28,
+      "dependencies": ["tap-027"],
+      "title": "Create global leaderboard screen",
+      "description": "Display top tappers across all rooms",
+      "acceptanceCriteria": [
+        "Ranked list with medals for top 3",
+        "Shows username, tap count, rooms played",
+        "Pull to refresh",
+        "Highlight current user if in top 100"
+      ],
+      "files": ["mobile/screens/LeaderboardScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-029",
+      "epicId": "epic-rooms",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-003"],
+      "platform": "mobile",
+      "priority": 29,
+      "dependencies": ["tap-007"],
+      "title": "Implement room favorites",
+      "description": "Allow users to star/favorite rooms",
+      "acceptanceCriteria": [
+        "Star icon on room list items",
+        "Toggle favorite state",
+        "Favorites tab shows starred rooms",
+        "Persist favorites locally"
+      ],
+      "files": ["mobile/screens/RoomListScreen.tsx", "mobile/stores/FavoritesStore.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-030",
+      "epicId": "epic-gameplay",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-006"],
+      "platform": "mobile",
+      "priority": 30,
+      "dependencies": ["tap-018"],
+      "title": "Add connection status indicator",
+      "description": "Show real-time connection state to users",
+      "acceptanceCriteria": [
+        "Status bar showing Connected/Connecting/Disconnected",
+        "Red bar for connection issues",
+        "Auto-hide when connected",
+        "Tap to retry connection"
+      ],
+      "files": ["mobile/components/ConnectionStatus.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-031",
+      "epicId": "epic-gameplay",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 31,
+      "dependencies": ["tap-020"],
+      "title": "Implement tap sound effects",
+      "description": "Add audio feedback for tap actions",
+      "acceptanceCriteria": [
+        "Load tap sound file",
+        "Play on button press",
+        "Different sound for others' taps",
+        "Respect device silent mode"
+      ],
+      "files": ["mobile/services/SoundManager.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-032",
+      "epicId": "epic-rooms",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-004"],
+      "platform": "mobile",
+      "priority": 32,
+      "dependencies": ["tap-011"],
+      "title": "Add room share functionality",
+      "description": "Share private room links with others",
+      "acceptanceCriteria": [
+        "Share button in private rooms",
+        "Generate shareable link",
+        "Copy to clipboard option",
+        "Native share sheet integration"
+      ],
+      "files": ["mobile/screens/GameRoomScreen.tsx", "mobile/utils/sharing.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-033",
+      "epicId": "epic-stats",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-009"],
+      "platform": "mobile",
+      "priority": 33,
+      "dependencies": ["tap-028"],
+      "title": "Create user profile screen",
+      "description": "Show individual user statistics",
+      "acceptanceCriteria": [
+        "Total taps count",
+        "Rooms played count",
+        "Global rank",
+        "Recent activity graph"
+      ],
+      "files": ["mobile/screens/ProfileScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-034",
+      "epicId": "epic-rooms",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 34,
+      "dependencies": ["tap-008"],
+      "title": "Implement room auto-cleanup",
+      "description": "Delete empty rooms after timeout",
+      "acceptanceCriteria": [
+        "Background job checking room activity",
+        "Delete rooms empty for 5 minutes",
+        "Clean up associated data",
+        "Log cleanup actions"
+      ],
+      "files": ["backend/jobs/roomCleanup.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-035",
+      "epicId": "epic-gameplay",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 35,
+      "dependencies": ["tap-017"],
+      "title": "Add rate limiting for tap spam",
+      "description": "Prevent abuse while showing activity appropriately",
+      "acceptanceCriteria": [
+        "Allow unlimited taps from users",
+        "Aggregate rapid taps in broadcasts",
+        "Update activity feed intelligently",
+        "No hard limits on tap frequency"
+      ],
+      "files": ["backend/websocket/handlers/tap.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-036",
+      "epicId": "epic-rooms",
+      "area": "mobile-state",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 36,
+      "dependencies": ["tap-015"],
+      "title": "Store per-room usernames",
+      "description": "Manage different usernames for different rooms",
+      "acceptanceCriteria": [
+        "Save username per room ID",
+        "Default to global username",
+        "Update when changed in room",
+        "Clean up old room usernames"
+      ],
+      "files": ["mobile/stores/UserStore.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-037",
+      "epicId": "epic-social",
+      "area": "shared-contracts",
+      "smokeTestRefs": [],
+      "platform": "both",
+      "priority": 37,
+      "dependencies": ["tap-023"],
+      "title": "Define activity feed types",
+      "description": "TypeScript interfaces for activity events",
+      "acceptanceCriteria": [
+        "ActivityEvent interface",
+        "Event types enum (tap, join, leave)",
+        "Timestamp and user info",
+        "Rate limit aggregation type"
+      ],
+      "files": ["shared/types/activity.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-038",
+      "epicId": "epic-gameplay",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 38,
+      "dependencies": ["tap-018"],
+      "title": "Add loading states for room entry",
+      "description": "Show appropriate loading UI when joining rooms",
+      "acceptanceCriteria": [
+        "Loading spinner on room join",
+        "Connection progress indicator",
+        "Error state with retry",
+        "Smooth transition to game view"
+      ],
+      "files": ["mobile/screens/GameRoomScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-039",
+      "epicId": "epic-rooms",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 39,
+      "dependencies": ["tap-007"],
+      "title": "Add empty states for room lists",
+      "description": "Helpful UI when no rooms exist",
+      "acceptanceCriteria": [
+        "Empty state for each tab",
+        "Illustration and helpful text",
+        "Call to action button",
+        "Different messages per tab type"
+      ],
+      "files": ["mobile/components/EmptyRoomList.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-040",
+      "epicId": "epic-gameplay",
+      "area": "mobile-nav",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 40,
+      "dependencies": ["tap-018"],
+      "title": "Handle back navigation from game room",
+      "description": "Properly disconnect and navigate when leaving rooms",
+      "acceptanceCriteria": [
+        "Confirm dialog if actively playing",
+        "Clean WebSocket disconnect",
+        "Return to room list",
+        "Handle hardware back button"
+      ],
+      "files": ["mobile/screens/GameRoomScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-041",
+      "epicId": "epic-stats",
+      "area": "backend-db",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 41,
+      "dependencies": ["tap-027"],
+      "title": "Create materialized views for stats",
+      "description": "Optimize leaderboard queries with views",
+      "acceptanceCriteria": [
+        "User stats summary view",
+        "Global leaderboard view",
+        "Refresh strategy (hourly)",
+        "Indexes for performance"
+      ],
+      "files": ["backend/db/views.sql"],
+      "notes": []
+    },
+    {
+      "id": "tap-042",
+      "epicId": "epic-rooms",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 42,
+      "dependencies": ["tap-007"],
+      "title": "Add room search functionality",
+      "description": "Search for public rooms by name",
+      "acceptanceCriteria": [
+        "Search bar in room list",
+        "Real-time search as you type",
+        "Clear search button",
+        "No results state"
+      ],
+      "files": ["mobile/screens/RoomListScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-043",
+      "epicId": "epic-onboarding",
+      "area": "testability",
+      "smokeTestRefs": ["smoke-001", "smoke-002"],
+      "platform": "mobile",
+      "priority": 43,
+      "dependencies": ["tap-001", "tap-005"],
+      "title": "Add test IDs for onboarding flow",
+      "description": "Add testID props for automated testing",
+      "acceptanceCriteria": [
+        "Test IDs on all interactive elements",
+        "Consistent naming convention",
+        "Document test ID schema",
+        "Accessibility labels included"
+      ],
+      "files": ["mobile/screens/OnboardingScreen.tsx", "mobile/screens/UsernameScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-044",
+      "epicId": "epic-gameplay",
+      "area": "testability",
+      "smokeTestRefs": ["smoke-006", "smoke-007"],
+      "platform": "mobile",
+      "priority": 44,
+      "dependencies": ["tap-018"],
+      "title": "Add test IDs for game room",
+      "description": "Test IDs for core gameplay elements",
+      "acceptanceCriteria": [
+        "tapButton testID",
+        "currentNumber testID",
+        "connectionStatus testID",
+        "Document in test guide"
+      ],
+      "files": ["mobile/screens/GameRoomScreen.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-045",
+      "epicId": "epic-rooms",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 45,
+      "dependencies": ["tap-013"],
+      "title": "Generate unique room codes",
+      "description": "Create shareable codes for private rooms",
+      "acceptanceCriteria": [
+        "6-character alphanumeric codes",
+        "Ensure uniqueness",
+        "Case insensitive lookup",
+        "Collision handling"
+      ],
+      "files": ["backend/utils/roomCodes.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-046",
+      "epicId": "epic-gameplay",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 46,
+      "dependencies": ["tap-021"],
+      "title": "Add number formatting",
+      "description": "Format large numbers with commas",
+      "acceptanceCriteria": [
+        "Add commas to numbers > 999",
+        "Animate comma positions",
+        "Consistent formatting throughout",
+        "Handle edge cases"
+      ],
+      "files": ["mobile/utils/numberFormat.ts", "mobile/components/AnimatedNumber.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-047",
+      "epicId": "epic-social",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 47,
+      "dependencies": ["tap-024"],
+      "title": "Add tap burst indicator",
+      "description": "Visual feedback for rapid tapping",
+      "acceptanceCriteria": [
+        "Fire/streak effect for 5+ rapid taps",
+        "Combo counter display",
+        "Reset after 2 second pause",
+        "Celebration at milestones"
+      ],
+      "files": ["mobile/components/TapStreak.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-048",
+      "epicId": "epic-rooms",
+      "area": "mobile-nav",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 48,
+      "dependencies": ["tap-007"],
+      "title": "Add bottom tab navigation",
+      "description": "Main app navigation structure",
+      "acceptanceCriteria": [
+        "Rooms, Leaderboard, Profile tabs",
+        "Icons and labels",
+        "Active state styling",
+        "Badge for favorites count"
+      ],
+      "files": ["mobile/navigation/TabNavigator.tsx"],
+      "notes": []
+    },
+    {
+      "id": "tap-049",
+      "epicId": "epic-stats",
+      "area": "backend-routes",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 49,
+      "dependencies": ["tap-033"],
+      "title": "Create user stats API",
+      "description": "Endpoint for individual user statistics",
+      "acceptanceCriteria": [
+        "GET /users/:id/stats endpoint",
+        "Total taps, rooms, rank",
+        "Daily/weekly activity",
+        "Cache user stats"
+      ],
+      "files": ["backend/routes/users.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-050",
+      "epicId": "epic-gameplay",
+      "area": "mobile-state",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 50,
+      "dependencies": ["tap-019"],
+      "title": "Handle app background/foreground",
+      "description": "Manage connections during app state changes",
+      "acceptanceCriteria": [
+        "Disconnect WebSocket on background",
+        "Reconnect when returning",
+        "Save/restore room state",
+        "Handle iOS/Android differences"
+      ],
+      "files": ["mobile/stores/GameStore.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-051",
+      "epicId": "epic-rooms",
+      "area": "testability",
+      "smokeTestRefs": ["smoke-003", "smoke-004", "smoke-005"],
+      "platform": "both",
+      "priority": 51,
+      "dependencies": ["tap-043"],
+      "title": "Create test data seeds",
+      "description": "Seed data for testing room features",
+      "acceptanceCriteria": [
+        "Script to create test rooms",
+        "Mix of public/private rooms",
+        "Rooms with various tap counts",
+        "Test user accounts"
+      ],
+      "files": ["backend/scripts/seedTestData.ts"],
+      "notes": []
+    },
+    {
+      "id": "tap-052",
+      "epicId": "epic-social",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "mobile",
+      "priority": 52,
+      "dependencies": ["tap-026"],
+      "title": "Add user avatar generation",
+      "description": "Generate avatar images from usernames",
+      "acceptanceCriteria": [
+        "Colorful avatars with initials",
+        "Consistent colors per username",
+        "Support 1-2 letter initials",
+        "Accessible contrast ratios"
+      ],
+      "files": ["mobile/components/UserAvatar.tsx"],
+      "notes": []
+    }
+  ]
+}

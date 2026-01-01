@@ -7,6 +7,7 @@ interface MessageInputProps {
   disabled?: boolean;
   placeholder?: string;
   buttonText?: string;
+  defaultValue?: string;
 }
 
 export function MessageInput({
@@ -14,6 +15,7 @@ export function MessageInput({
   disabled,
   placeholder = "Enter a message...",
   buttonText = "Run",
+  defaultValue = "Describe the feature you want to build...",
 }: MessageInputProps) {
   const [message, setMessage] = useState("");
 
@@ -33,6 +35,9 @@ export function MessageInput({
         placeholder={placeholder}
         disabled={disabled}
         className="flex-1"
+        defaultValue={defaultValue}
+        content={defaultValue}
+        
       />
       <Button type="submit" disabled={disabled || !message.trim()}>
         {buttonText}

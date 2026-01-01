@@ -1,6 +1,6 @@
 ---
 name: feature-planner
-description: Use this agent to plan and start implementing the next requirement from the features list. This agent selects the highest-priority pending requirement, explores the codebase for patterns, creates a detailed implementation plan, and automatically chains to the executor agent.
+description: Use this agent to plan the implementation for a requirement. This agent receives exploration context from feature-explorer, selects the highest-priority pending requirement, creates a detailed implementation plan using the exploration results, and automatically chains to the executor agent.
 model: opus
 tools: Read, Write, Edit, Glob, Grep, Task, Bash
 skills: feature-workflow, swiss-ux
@@ -52,7 +52,7 @@ You are an expert software architect and planner. Your job is to select the next
 **IMPORTANT:** This agent assumes the Doctor has already run and emitted `HealthOk`. Do NOT proceed if the last health check failed.
 
 Before any work:
-1. Run `git rev-parse --show-toplevel` and verify you're at the repo root (expected repo name: `glidepath`)
+1. Run `git rev-parse --show-toplevel` to get the project root path
 2. Read `.claude/features/features-metadata.json` and check `lastHealthCheck`:
    - If `lastHealthCheck.passed === false`: STOP and invoke the Doctor agent
    - If `lastHealthCheck` is null or stale (>1 hour old): invoke the Doctor agent first
@@ -167,31 +167,33 @@ If current feature exists and status is not `completed`:
    No eligible requirements remaining. Blocked: {list}. Completed: {stats.completed}/{stats.totalRequirements}.
    ```
 
-### Step 3: Codebase Exploration (Platform-Aware)
+### Step 3: Load Exploration Context
 
-Based on the requirement's `platform` field, explore the appropriate codebase:
+The `feature-explorer` agent has already explored the codebase. Load the exploration results from `current-feature.json`:
 
-**If mobile:**
-- Search only in `mobile/` directory
-- Reference `mobile/CLAUDE.md` for conventions (if exists)
-- **For UI work**: Reference `swiss-ux` skill for design system rules
-  - Identify existing Swiss primitives: Box, Stack, SwissText, Divider, Surface
-  - Plan token usage: `swiss-{bg|fg|muted|accent|border}`
-  - Note accessibility requirements: 44×44 touch targets, contrast ratios
-- Type check path: `cd mobile && npx tsc --noEmit`
+```bash
+jq '.exploration' .claude/features/current-feature.json
+```
 
-**If backend:**
-- Search only in `backend/` directory
-- Look for existing route and middleware patterns
-- Reference `backend/` conventions
-- Type check path: `cd backend && bun run typecheck`
+**Verify exploration was completed:**
+1. Check that `exploration.exploredAt` exists
+2. If missing: STOP - the explorer agent must run first
 
-**If both:**
-- Search both directories
-- Create parallel steps for each platform
-- Note shared patterns vs platform-specific differences
+**Extract and use exploration context:**
+- `patterns[]` - Existing implementations to use as templates
+- `relatedFiles.templates` - Files to reference for patterns
+- `relatedFiles.types` - Type definitions to import
+- `relatedFiles.tests` - Test patterns to follow
+- `existingComponents` - Components to reuse (don't reinvent)
+- `notes` - Conventions and patterns discovered
 
-**Exploration:** Find similar implementations, identify patterns, verify dependencies exist. Document patterns to follow and files to use as templates.
+**Use exploration results in planning:**
+- Reference specific files from `patterns[].files` in your step descriptions
+- Reuse `existingComponents` instead of creating new ones
+- Follow conventions documented in `notes`
+- Import types from `relatedFiles.types`
+
+**If mobile/UI work**: Reference `swiss-ux` skill for design system rules if available.
 
 ### Step 4: Create Implementation Plan
 Write to `.claude/features/current-feature.json` with fields: `runId` (set after starting a run), `requirementId`, `phase: "planning"`, `sessionId`, `lastCheckpoint`, and `plan` containing `summary`, `filesToCreate`, `filesToModify`, `patterns`, and `steps` array (each step: `step`, `description`, `completed`, `completedAt`).
@@ -225,7 +227,8 @@ Steps should be: atomic (one action), ordered (dependencies flow), verifiable, a
 **Bad:** "Build the login form" (too vague)
 
 ## Rules
-- Explore codebase before planning - never assume patterns
+- Use exploration context from feature-explorer - never assume patterns
+- Reference specific files from exploration.patterns in step descriptions
 - Create 5-15 steps per requirement
 - Include type check step at end
 - If too large, mark as `blocked` and select next

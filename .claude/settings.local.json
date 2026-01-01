@@ -13,7 +13,19 @@
       "Bash(bun run ask:*)",
       "Bash(bunx create-vite:*)",
       "Bash(bun add:*)",
-      "Bash(bun run build:*)"
+      "Bash(bun run build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(node --check:*)",
+      "Bash(bun build:*)",
+      "Bash(timeout 3 bun run:*)",
+      "Bash(npx vite:*)",
+      "Bash(bun run:*)",
+      "Bash(head:*)",
+      "Bash(find:*)",
+      "WebSearch"
     ]
   }
 }

@@ -5,10 +5,23 @@ interface PipelineProgressProps {
   pipeline: Pipeline;
 }
 
-const phases: PipelinePhase[] = ["qa", "planning", "executing", "testing"];
+function getFailureReason(pipeline: Pipeline): string | null {
+  // Find the most recent failure event
+  const failureEvent = [...pipeline.events]
+    .reverse()
+    .find((e) => e.type === "pipeline_failed" || e.type === "requirement_failed");
+
+  if (failureEvent && "error" in failureEvent.data) {
+    return String(failureEvent.data.error);
+  }
+  return null;
+}
+
+const phases: PipelinePhase[] = ["qa", "exploring", "planning", "executing", "testing"];
 
 const phaseLabels: Record<PipelinePhase, string> = {
   qa: "Q&A",
+  exploring: "Explore",
   planning: "Plan",
   executing: "Execute",
   testing: "Test",
@@ -133,7 +146,8 @@ export function PipelineProgress({ pipeline }: PipelineProgressProps) {
       )}
       {pipeline.status === "failed" && (
         <div className="mt-3 text-sm text-red-700 bg-red-50 rounded px-3 py-2">
-          Pipeline failed. Check the logs for details.
+          <div className="font-medium">Pipeline failed</div>
+          {getFailureReason(pipeline)}
         </div>
       )}
       {pipeline.status === "aborted" && (

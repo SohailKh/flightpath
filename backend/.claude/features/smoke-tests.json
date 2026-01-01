@@ -1,0 +1,165 @@
+{
+  "featurePrefix": "tap",
+  "generatedAt": "2024-12-31T00:00:00Z",
+  "smokeTests": [
+    {
+      "id": "smoke-001",
+      "title": "Complete onboarding flow",
+      "platform": "mobile",
+      "epicId": "epic-onboarding",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "tap-004" },
+      "preconditions": ["Fresh app install", "Onboarding not completed"],
+      "steps": [
+        "launchApp",
+        "assertVisible:testId=onboardingWelcome",
+        "tap:testId=nextButton",
+        "assertVisible:testId=onboardingHowTo",
+        "tap:testId=nextButton",
+        "assertVisible:testId=onboardingFeatures",
+        "tap:testId=getStartedButton",
+        "screenshot:name=onboarding-complete"
+      ]
+    },
+    {
+      "id": "smoke-002",
+      "title": "Set username and reach home",
+      "platform": "mobile",
+      "epicId": "epic-onboarding",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "tap-006" },
+      "preconditions": ["Onboarding completed", "Username not set"],
+      "steps": [
+        "assertVisible:testId=usernameInput",
+        "type:testId=usernameInput value=TestUser123",
+        "tap:testId=continueButton",
+        "assertVisible:testId=homeScreen",
+        "assertVisible:testId=roomList",
+        "screenshot:name=home-screen"
+      ]
+    },
+    {
+      "id": "smoke-003",
+      "title": "View public rooms list",
+      "platform": "mobile",
+      "epicId": "epic-rooms",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "tap-012" },
+      "preconditions": ["User logged in", "Test rooms exist"],
+      "steps": [
+        "launchApp",
+        "assertVisible:testId=publicRoomsTab",
+        "tap:testId=publicRoomsTab",
+        "wait:ms=1000",
+        "assertVisible:testId=roomListItem",
+        "screenshot:name=public-rooms"
+      ]
+    },
+    {
+      "id": "smoke-004",
+      "title": "Create a new public room",
+      "platform": "mobile",
+      "epicId": "epic-rooms",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "tap-012" },
+      "preconditions": ["User logged in"],
+      "steps": [
+        "tap:testId=createRoomButton",
+        "assertVisible:testId=roomNameInput",
+        "type:testId=roomNameInput value=Test Room",
+        "tap:testId=publicRoomToggle",
+        "tap:testId=createButton",
+        "wait:ms=2000",
+        "assertVisible:testId=gameRoomScreen",
+        "screenshot:name=room-created"
+      ]
+    },
+    {
+      "id": "smoke-005",
+      "title": "Join private room via link",
+      "platform": "mobile",
+      "epicId": "epic-rooms",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "tap-015" },
+      "preconditions": ["Private room exists with code ABC123"],
+      "steps": [
+        "launchApp",
+        "openDeepLink:url=tapgame://room/ABC123",
+        "assertVisible:testId=joinRoomScreen",
+        "type:testId=roomUsernameInput value=Guest123",
+        "tap:testId=joinButton",
+        "wait:ms=2000",
+        "assertVisible:testId=gameRoomScreen",
+        "screenshot:name=joined-private"
+      ]
+    },
+    {
+      "id": "smoke-006",
+      "title": "Tap button changes number",
+      "platform": "mobile",
+      "epicId": "epic-gameplay",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "tap-020" },
+      "preconditions": ["User in active room"],
+      "steps": [
+        "assertVisible:testId=tapButton",
+        "assertVisible:testId=currentNumber",
+        "tap:testId=tapButton",
+        "wait:ms=1000",
+        "assertVisible:testId=currentNumber",
+        "screenshot:name=number-changed"
+      ]
+    },
+    {
+      "id": "smoke-007",
+      "title": "See real-time updates from others",
+      "platform": "mobile",
+      "epicId": "epic-gameplay",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "tap-021" },
+      "preconditions": ["Two users in same room", "WebSocket connected"],
+      "steps": [
+        "assertVisible:testId=currentNumber",
+        "curl:POST /test/simulate-tap expect=200",
+        "wait:ms=2000",
+        "assertVisible:testId=currentNumber",
+        "assertVisible:testId=numberAnimation",
+        "screenshot:name=realtime-update"
+      ]
+    },
+    {
+      "id": "smoke-008",
+      "title": "View activity feed",
+      "platform": "mobile",
+      "epicId": "epic-social",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "tap-024" },
+      "preconditions": ["User in room with activity"],
+      "steps": [
+        "tap:testId=activityFeedToggle",
+        "assertVisible:testId=activityFeed",
+        "assertVisible:testId=activityItem",
+        "tap:testId=tapButton",
+        "wait:ms=1000",
+        "assertVisible:testId=newActivityItem",
+        "screenshot:name=activity-feed"
+      ]
+    },
+    {
+      "id": "smoke-009",
+      "title": "View global leaderboard",
+      "platform": "mobile",
+      "epicId": "epic-stats",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "tap-028" },
+      "preconditions": ["Leaderboard data exists"],
+      "steps": [
+        "tap:testId=leaderboardTab",
+        "assertVisible:testId=leaderboardScreen",
+        "assertVisible:testId=leaderboardItem",
+        "assertVisible:testId=topThreeMedals",
+        "screenshot:name=leaderboard"
+      ]
+    }
+  ]
+}

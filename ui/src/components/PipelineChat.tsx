@@ -1,59 +1,21 @@
-import { useState, useEffect, useRef } from "react";
-import { cn } from "@/lib/utils";
+import { useState } from "react";
 import type { PipelineEvent } from "../types";
 import { sendPipelineMessage } from "../lib/api";
-import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { StatusPanel } from "./StatusPanel";
+import { ActivityStream } from "./ActivityStream";
+import { ResponseLog } from "./ResponseLog";
 
 interface PipelineChatProps {
   pipelineId: string;
   events: PipelineEvent[];
 }
 
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  timestamp: string;
-}
-
 export function PipelineChat({ pipelineId, events }: PipelineChatProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Convert events to chat messages
-  useEffect(() => {
-    const chatMessages: ChatMessage[] = [];
-
-    for (const event of events) {
-      if (event.type === "user_message" && "content" in event.data) {
-        chatMessages.push({
-          role: "user",
-          content: String(event.data.content),
-          timestamp: event.ts,
-        });
-      } else if (
-        event.type === "agent_message" &&
-        "content" in event.data &&
-        !event.data.streaming
-      ) {
-        chatMessages.push({
-          role: "assistant",
-          content: String(event.data.content),
-          timestamp: event.ts,
-        });
-      }
-    }
-
-    setMessages(chatMessages);
-  }, [events]);
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  const [answeredQuestions, setAnsweredQuestions] = useState<Set<string>>(new Set());
 
   const handleSend = async () => {
     if (!input.trim() || isSending) return;
@@ -66,7 +28,6 @@ export function PipelineChat({ pipelineId, events }: PipelineChatProps) {
       await sendPipelineMessage(pipelineId, message);
     } catch (err) {
       console.error("Failed to send message:", err);
-      // Restore input on error
       setInput(message);
     } finally {
       setIsSending(false);
@@ -80,7 +41,33 @@ export function PipelineChat({ pipelineId, events }: PipelineChatProps) {
     }
   };
 
-  // Check if we're waiting for user input
+  const handleQuestionSubmit = async (answers: Record<string, string | string[]>, timestamp: string) => {
+    const formattedAnswers = Object.entries(answers)
+      .map(([header, value]) => {
+        if (Array.isArray(value)) {
+          return `${header}:\n${value.map(v => `- ${v}`).join("\n")}`;
+        }
+        return `${header}: ${value}`;
+      })
+      .join("\n\n");
+
+    setIsSending(true);
+    setAnsweredQuestions(prev => new Set(prev).add(timestamp));
+
+    try {
+      await sendPipelineMessage(pipelineId, formattedAnswers);
+    } catch (err) {
+      console.error("Failed to send answers:", err);
+      setAnsweredQuestions(prev => {
+        const next = new Set(prev);
+        next.delete(timestamp);
+        return next;
+      });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   const lastAgentEvent = [...events]
     .reverse()
     .find((e) => e.type === "agent_message");
@@ -90,26 +77,31 @@ export function PipelineChat({ pipelineId, events }: PipelineChatProps) {
     lastAgentEvent.data.requiresUserInput;
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Messages */}
-      <Card className="flex-1 overflow-hidden flex flex-col">
-        <CardContent className="flex-1 overflow-y-auto py-4">
-          <div className="space-y-4">
-            {messages.length === 0 && (
-              <div className="text-gray-400 text-sm text-center py-8">
-                Starting feature discovery...
-              </div>
-            )}
-            {messages.map((msg, i) => (
-              <ChatBubble key={i} message={msg} />
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-        </CardContent>
-      </Card>
+    <div className="flex flex-col h-full gap-4">
+      {/* Status Panel */}
+      <StatusPanel events={events} currentPhase="qa" />
+
+      {/* Side-by-side content area */}
+      <div className="flex-1 flex gap-4 min-h-0">
+        {/* Activity Stream - Left */}
+        <div className="w-1/2">
+          <ActivityStream events={events} />
+        </div>
+
+        {/* Response Log - Right */}
+        <div className="w-1/2">
+          <ResponseLog
+            events={events}
+            pipelineId={pipelineId}
+            onQuestionSubmit={handleQuestionSubmit}
+            answeredQuestions={answeredQuestions}
+            isSending={isSending}
+          />
+        </div>
+      </div>
 
       {/* Input area */}
-      <div className="flex gap-2 mt-4">
+      <div className="flex gap-2">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -125,35 +117,6 @@ export function PipelineChat({ pipelineId, events }: PipelineChatProps) {
         <Button onClick={handleSend} disabled={!input.trim() || isSending}>
           {isSending ? "Sending..." : "Send"}
         </Button>
-      </div>
-    </div>
-  );
-}
-
-function ChatBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === "user";
-
-  return (
-    <div
-      className={cn("flex", isUser ? "justify-end" : "justify-start")}
-    >
-      <div
-        className={cn(
-          "max-w-[80%] rounded-lg px-4 py-2",
-          isUser
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-900"
-        )}
-      >
-        <div className="text-sm whitespace-pre-wrap">{message.content}</div>
-        <div
-          className={cn(
-            "text-xs mt-1",
-            isUser ? "text-blue-200" : "text-gray-400"
-          )}
-        >
-          {new Date(message.timestamp).toLocaleTimeString()}
-        </div>
       </div>
     </div>
   );

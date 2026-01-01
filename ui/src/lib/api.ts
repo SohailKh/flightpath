@@ -5,6 +5,7 @@ import type {
   PipelineEvent,
   PipelineSummary,
   ArtifactRef,
+  FlowAnalysisResult,
 } from "../types";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8787";
@@ -82,6 +83,13 @@ export function subscribeToRunEvents(
 // Pipeline API
 // ============================================
 
+export class PipelineConflictError extends Error {
+  constructor(public activePipelineId: string) {
+    super("A pipeline is already active");
+    this.name = "PipelineConflictError";
+  }
+}
+
 export async function createPipeline(
   initialPrompt: string
 ): Promise<{ pipelineId: string }> {
@@ -93,6 +101,10 @@ export async function createPipeline(
 
   if (!response.ok) {
     const error = await response.json();
+    // Handle 409 conflict with active pipeline
+    if (response.status === 409 && error.activePipelineId) {
+      throw new PipelineConflictError(error.activePipelineId);
+    }
     throw new Error(error.error || "Failed to create pipeline");
   }
 
@@ -198,6 +210,38 @@ export function getArtifactUrl(pipelineId: string, artifactId: string): string {
   return `${BACKEND_URL}/api/pipelines/${pipelineId}/artifacts/${artifactId}`;
 }
 
+/**
+ * Fetch artifact content as text (for diffs, test results)
+ */
+export async function getArtifactContent(
+  pipelineId: string,
+  artifactId: string
+): Promise<string> {
+  const response = await fetch(getArtifactUrl(pipelineId, artifactId));
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch artifact content");
+  }
+
+  return response.text();
+}
+
+/**
+ * Fetch artifact content as JSON
+ */
+export async function getArtifactJson<T = unknown>(
+  pipelineId: string,
+  artifactId: string
+): Promise<T> {
+  const response = await fetch(getArtifactUrl(pipelineId, artifactId));
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch artifact content");
+  }
+
+  return response.json();
+}
+
 export interface PipelineEventStreamCallbacks {
   onEvent: (event: PipelineEvent) => void;
   onDone: (status: string) => void;
@@ -240,4 +284,24 @@ export function subscribeToPipelineEvents(
   return () => {
     eventSource.close();
   };
+}
+
+// ============================================
+// Flow Analysis API
+// ============================================
+
+export async function analyzeFlow(
+  pipelineId: string
+): Promise<FlowAnalysisResult> {
+  const response = await fetch(
+    `${BACKEND_URL}/api/pipelines/${pipelineId}/analyze`,
+    { method: "POST" }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to analyze flow");
+  }
+
+  return response.json();
 }

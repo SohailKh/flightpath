@@ -21,9 +21,11 @@ export interface SavedArtifact {
 
 /**
  * Get the artifacts directory for a pipeline
+ * Uses targetProjectPath if provided, otherwise falls back to process.cwd()
  */
-function getArtifactsDir(pipelineId: string): string {
-  return join(process.cwd(), ARTIFACTS_BASE_DIR, pipelineId);
+function getArtifactsDir(pipelineId: string, targetProjectPath?: string): string {
+  const baseDir = targetProjectPath || process.cwd();
+  return join(baseDir, ARTIFACTS_BASE_DIR, pipelineId);
 }
 
 /**
@@ -64,9 +66,10 @@ function getExtension(type: ArtifactType): string {
  */
 async function countArtifacts(
   pipelineId: string,
-  type: ArtifactType
+  type: ArtifactType,
+  targetProjectPath?: string
 ): Promise<number> {
-  const dir = getArtifactsDir(pipelineId);
+  const dir = getArtifactsDir(pipelineId, targetProjectPath);
   if (!existsSync(dir)) return 0;
 
   const files = await readdir(dir);
@@ -80,12 +83,13 @@ export async function saveArtifact(
   pipelineId: string,
   type: ArtifactType,
   data: Buffer | string,
-  requirementId?: string
+  requirementId?: string,
+  targetProjectPath?: string
 ): Promise<SavedArtifact> {
-  const dir = getArtifactsDir(pipelineId);
+  const dir = getArtifactsDir(pipelineId, targetProjectPath);
   await ensureDir(dir);
 
-  const count = await countArtifacts(pipelineId, type);
+  const count = await countArtifacts(pipelineId, type, targetProjectPath);
   const id = generateArtifactId(type, count + 1);
   const ext = getExtension(type);
   const filename = `${id}${ext}`;
@@ -114,9 +118,10 @@ export async function saveArtifact(
 export async function saveScreenshot(
   pipelineId: string,
   imageData: Buffer,
-  requirementId?: string
+  requirementId?: string,
+  targetProjectPath?: string
 ): Promise<SavedArtifact> {
-  return saveArtifact(pipelineId, "screenshot", imageData, requirementId);
+  return saveArtifact(pipelineId, "screenshot", imageData, requirementId, targetProjectPath);
 }
 
 /**
@@ -125,10 +130,11 @@ export async function saveScreenshot(
 export async function saveTestResult(
   pipelineId: string,
   result: Record<string, unknown>,
-  requirementId?: string
+  requirementId?: string,
+  targetProjectPath?: string
 ): Promise<SavedArtifact> {
   const jsonData = JSON.stringify(result, null, 2);
-  return saveArtifact(pipelineId, "test_result", jsonData, requirementId);
+  return saveArtifact(pipelineId, "test_result", jsonData, requirementId, targetProjectPath);
 }
 
 /**
@@ -137,9 +143,10 @@ export async function saveTestResult(
 export async function saveDiff(
   pipelineId: string,
   diffContent: string,
-  requirementId?: string
+  requirementId?: string,
+  targetProjectPath?: string
 ): Promise<SavedArtifact> {
-  return saveArtifact(pipelineId, "diff", diffContent, requirementId);
+  return saveArtifact(pipelineId, "diff", diffContent, requirementId, targetProjectPath);
 }
 
 /**
@@ -147,9 +154,10 @@ export async function saveDiff(
  */
 export async function getArtifact(
   pipelineId: string,
-  artifactId: string
+  artifactId: string,
+  targetProjectPath?: string
 ): Promise<Buffer | null> {
-  const dir = getArtifactsDir(pipelineId);
+  const dir = getArtifactsDir(pipelineId, targetProjectPath);
   if (!existsSync(dir)) return null;
 
   const files = await readdir(dir);
@@ -164,9 +172,10 @@ export async function getArtifact(
  * List all artifacts for a pipeline
  */
 export async function listArtifacts(
-  pipelineId: string
+  pipelineId: string,
+  targetProjectPath?: string
 ): Promise<SavedArtifact[]> {
-  const dir = getArtifactsDir(pipelineId);
+  const dir = getArtifactsDir(pipelineId, targetProjectPath);
   if (!existsSync(dir)) return [];
 
   const files = await readdir(dir);

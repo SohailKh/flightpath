@@ -68,8 +68,8 @@ The Planner/Executor agents previously fixed type errors automatically during fe
 ```bash
 git rev-parse --show-toplevel
 ```
-- Expected: `/Users/sohailkhanifar/developer/glidepath`
-- If wrong: `HealthFailed` with action `block` - cannot proceed from wrong directory
+- Store the result as `REPO_ROOT` for use in subsequent commands
+- If command fails: `HealthFailed` with action `block` - not in a git repository
 
 ### Check 2: Git Status
 ```bash
@@ -86,16 +86,11 @@ git status --porcelain
 Determine platform from context:
 - If `current-feature.json` exists: use its platform
 - If `features-metadata.json` exists: use `primaryPlatform`
-- Otherwise: check both platforms
+- Otherwise: check all enabled platforms from **Project Context**
 
-**Mobile:**
+**Run type check command from Project Context for each platform:**
 ```bash
-cd mobile && npx tsc --noEmit 2>&1
-```
-
-**Backend:**
-```bash
-cd backend && bun run typecheck 2>&1
+cd {platform.directory} && {platform.typeCheckCommand} 2>&1
 ```
 
 **Evaluation:**
@@ -104,15 +99,10 @@ cd backend && bun run typecheck 2>&1
 
 ### Check 4: Dependency Status (Optional but Recommended)
 
-**Mobile:**
-```bash
-cd mobile && npm ls --depth=0 2>&1 | grep -c "UNMET" || echo 0
-```
-
-**Backend:**
-```bash
-cd backend && bun pm ls 2>&1 | grep -c "missing" || echo 0
-```
+For each platform, check for missing dependencies using the platform's package manager:
+- **npm**: `cd {dir} && npm ls --depth=0 2>&1 | grep -c "UNMET" || echo 0`
+- **bun**: `cd {dir} && bun pm ls 2>&1 | grep -c "missing" || echo 0`
+- **pnpm**: `cd {dir} && pnpm ls 2>&1 | grep -c "missing" || echo 0`
 
 If missing dependencies:
 - Log warning to progress file
@@ -120,13 +110,14 @@ If missing dependencies:
 
 ### Check 5: Dev Server Reachability (Optional)
 
-Only check if backend work is expected:
+Only check if the platform has a `healthCheckUrl` configured in Project Context:
 ```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health || echo "unreachable"
+curl -s -o /dev/null -w "%{http_code}" {platform.healthCheckUrl} || echo "unreachable"
 ```
 
 - If 200: Pass
 - If unreachable: Log warning, do not block (dev may start server later)
+- If no healthCheckUrl configured: Skip this check
 
 ## Output Events
 
@@ -138,13 +129,13 @@ Emit when ALL required checks pass:
 {
   "id": "evt_{next_id}",
   "ts": "ISO timestamp",
-  "sessionId": {current_session},
+  "sessionId": "{current_session}",
   "actor": "feature-doctor",
   "type": "HealthOk",
   "payload": {
-    "checksRun": ["repo-root", "git-status", "typecheck-mobile", "typecheck-backend"],
+    "checksRun": ["repo-root", "git-status", "typecheck-{platform1}", "typecheck-{platform2}"],
     "stashCreated": "stash@{0}" | null,
-    "warnings": ["backend dev server unreachable"]
+    "warnings": ["dev server unreachable"]
   }
 }
 ```
@@ -159,16 +150,15 @@ Emit when any required check fails:
 {
   "id": "evt_{next_id}",
   "ts": "ISO timestamp",
-  "sessionId": {current_session},
+  "sessionId": "{current_session}",
   "actor": "feature-doctor",
   "type": "HealthFailed",
   "payload": {
-    "failedCheck": "typecheck-mobile",
+    "failedCheck": "typecheck-{platform}",
     "action": "chore" | "block",
-    "errorSummary": "Found 3 type errors in mobile/",
+    "errorSummary": "Found N type errors in {platform}/",
     "errors": [
-      "mobile/app/screens/HomeScreen.tsx:45 - Property 'foo' does not exist",
-      "mobile/components/Button.tsx:12 - Type 'string' is not assignable"
+      "{path}:{line} - {error description}"
     ],
     "remediation": "Create chore branch and fix before feature work"
   }

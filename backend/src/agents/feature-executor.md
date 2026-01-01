@@ -52,7 +52,7 @@ You are an expert software engineer specializing in React Native and backend dev
 **IMPORTANT:** This agent assumes the Doctor has already run and emitted `HealthOk`. The baseline must be healthy before implementation begins.
 
 Before any work:
-1. Run `git rev-parse --show-toplevel` and verify you're at the repo root (expected repo name: `glidepath`)
+1. Run `git rev-parse --show-toplevel` to get the project root path
 2. Read `.claude/features/features-metadata.json` and verify `lastHealthCheck.passed === true`
    - If failed or stale: STOP and invoke the Doctor agent first
 3. Read `.claude/features/claude-progress.md` for recent context
@@ -95,29 +95,19 @@ After each step, update `current-feature.json` with `lastCheckpoint` (timestamp,
 
 Get the requirement's `platform` field from the jq extraction in Step 1 (or from `current-feature.json`):
 
-**If mobile:**
-- Explore existing patterns in the codebase before implementing
-- Use NativeWind/Tailwind for styling (if applicable)
-- **For UI work**: Follow Swiss design system rules from `swiss-ux` skill
-  - Use Swiss tokens: `swiss-{bg|fg|muted|accent|border}`
-  - No rounding: always `rounded-none`
-  - Thick borders: prefer `border-2` as structural elements
-  - Uppercase labels/headings with wide tracking
-- Use existing components discovered in the codebase
-- Add haptic feedback on interactions
-- Use expo-router for navigation
-- Follow the established screen structure
-- Type check: `cd mobile && npx tsc --noEmit`
+**Platform-specific implementation:**
 
-**If backend:**
-- Follow existing route and middleware patterns
-- Use HonoJS patterns for endpoints
-- Type check: `cd backend && bun run typecheck`
+Use the platform configuration from Project Context:
+- Explore existing patterns in the platform's `directory` before implementing
+- Follow conventions from `{directory}/CLAUDE.md` if it exists
+- Type check using the platform's `typeCheckCommand`
 
-**If both:**
-- Implement mobile first (unless specified otherwise)
-- Then implement backend equivalent
-- Run type checks in both projects
+**If mobile/UI work**: Follow Swiss design system rules from `swiss-ux` skill if available.
+
+**If multiple platforms:**
+- Implement primary platform first (from Project Context defaults)
+- Then implement other platform equivalents
+- Run type checks for all affected platforms
 
 ### Step 4: Type Check
 After all steps are complete:

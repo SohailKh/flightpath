@@ -31,10 +31,11 @@ export interface Run {
 // Pipeline Types
 // ============================================
 
-export type PipelinePhase = "qa" | "planning" | "executing" | "testing";
+export type PipelinePhase = "qa" | "exploring" | "planning" | "executing" | "testing";
 
 export type PipelineStatus =
   | "qa"
+  | "exploring"
   | "planning"
   | "executing"
   | "testing"
@@ -47,6 +48,8 @@ export type PipelineEventType =
   // Phase transitions
   | "qa_started"
   | "qa_completed"
+  | "exploring_started"
+  | "exploring_completed"
   | "planning_started"
   | "planning_completed"
   | "executing_started"
@@ -72,7 +75,36 @@ export type PipelineEventType =
   | "aborted"
   // Terminal
   | "pipeline_completed"
-  | "pipeline_failed";
+  | "pipeline_failed"
+  // Tool activity (for verbose logging)
+  | "tool_started"
+  | "tool_completed"
+  | "tool_error"
+  | "status_update"
+  // Parallel exploration
+  | "parallel_exploration_started"
+  | "parallel_exploration_completed"
+  | "explorer_started"
+  | "explorer_completed"
+  | "explorer_error"
+  | "model_selected";
+
+// Tool event data for tool_started/tool_completed/tool_error events
+export interface ToolEventData {
+  toolName: string;
+  toolUseId: string;
+  args?: unknown;
+  durationMs?: number;
+  result?: string;
+  error?: string;
+  phase?: PipelinePhase;
+}
+
+// Status update data for status_update events
+export interface StatusUpdateData {
+  action: string;
+  phase: PipelinePhase;
+}
 
 export interface PipelineEvent {
   ts: string;
@@ -110,6 +142,22 @@ export interface ConversationMessage {
   content: string;
 }
 
+// ============================================
+// AskUserQuestion Types
+// ============================================
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface AskUserQuestion {
+  header: string;
+  question: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
 export interface Pipeline {
   id: string;
   createdAt: string;
@@ -131,4 +179,59 @@ export interface PipelineSummary {
   createdAt: string;
   phase: PhaseState;
   requirementsCount: number;
+}
+
+// ============================================
+// Flow Analysis Types
+// ============================================
+
+export interface AnalysisMetadata {
+  analyzedAt: string;
+  pipelineId: string;
+  toolCallCount: number;
+  errorCount: number;
+  retryCount: number;
+  duration: string;
+  phases: string[];
+}
+
+export interface FlowAnalysisResult {
+  suggestions: string;
+  claudeCodePrompt: string;
+  contextData: string;
+  metadata: AnalysisMetadata;
+}
+
+// ============================================
+// Parallel Exploration Types
+// ============================================
+
+export type ExplorerType = "pattern" | "api" | "test";
+export type ExplorationDepth = "quick" | "medium" | "thorough";
+
+export interface ExplorerProgress {
+  type: ExplorerType;
+  status: "pending" | "running" | "completed" | "error";
+  duration?: number;
+  patternsFound?: number;
+  filesFound?: number;
+  error?: string;
+}
+
+export interface ParallelExplorationState {
+  requirementId: string;
+  depth: ExplorationDepth;
+  explorers: ExplorerProgress[];
+  selectedModel?: string;
+  complexityScore?: number;
+  totalDuration?: number;
+}
+
+export interface ModelSelectionData {
+  requirementId: string;
+  selectedModel: string;
+  complexityScore: number;
+  depth: ExplorationDepth;
+  successfulExplorers: number;
+  failedExplorers: number;
 }

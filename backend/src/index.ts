@@ -37,6 +37,7 @@ import {
   listArtifacts,
   getContentType,
 } from "./lib/artifacts";
+import { analyzeFlow } from "./lib/flow-analyzer";
 
 type Bindings = {
   ANTHROPIC_API_KEY?: string;
@@ -250,6 +251,7 @@ app.get("/api/runs/:id/events", async (c) => {
 // Pipeline request schema
 const PipelineRequestSchema = z.object({
   initialPrompt: z.string().min(1, "initialPrompt is required"),
+  targetProjectPath: z.string().optional(),
 });
 
 // Create a new pipeline
@@ -284,18 +286,19 @@ app.post("/api/pipelines", async (c) => {
     );
   }
 
-  const { initialPrompt } = parsed.data;
+  const { initialPrompt, targetProjectPath } = parsed.data;
 
   // Create pipeline
-  const pipeline = createPipeline(initialPrompt);
+  const pipeline = createPipeline(initialPrompt, targetProjectPath);
   if (!pipeline) {
     return c.json({ error: "Failed to create pipeline" }, 500);
   }
 
   // Start QA phase in background
+  console.log(`[API] Created pipeline ${pipeline.id}, starting QA phase...`);
   setTimeout(() => {
-    runQAPhase(pipeline.id, initialPrompt).catch((err) => {
-      console.error("QA phase error:", err);
+    runQAPhase(pipeline.id, initialPrompt, targetProjectPath).catch((err) => {
+      console.error("[API] QA phase error:", err);
     });
   }, 0);
 
@@ -542,11 +545,33 @@ app.get("/api/pipelines/:id/artifacts/:artifactId", async (c) => {
   });
 });
 
+// Analyze pipeline flow for improvement suggestions
+app.post("/api/pipelines/:id/analyze", async (c) => {
+  const pipelineId = c.req.param("id");
+  const pipeline = getPipeline(pipelineId);
+
+  if (!pipeline) {
+    return c.json({ error: "Pipeline not found" }, 404);
+  }
+
+  try {
+    const result = await analyzeFlow(pipeline);
+    return c.json(result);
+  } catch (err) {
+    console.error("Analysis error:", err);
+    return c.json(
+      { error: err instanceof Error ? err.message : "Analysis failed" },
+      500
+    );
+  }
+});
+
 // ============================================
 
 const port = parseInt(process.env.PORT || "8787", 10);
 
 // For Bun runtime (auto-starts server)
+console.log(`[Backend] Starting server on port ${port}...`);
 export default {
   port,
   fetch: app.fetch,

@@ -1,7 +1,10 @@
 /**
  * Run session model for observing agent executions.
  * In-memory store with pub/sub for SSE streaming.
+ * Persists state to JSON for recovery across restarts.
  */
+
+import { loadFromFile, saveToFile, clearFile } from "./persistence";
 
 export type RunEventType =
   | "received"
@@ -30,9 +33,44 @@ export interface Run {
 
 type EventSubscriber = (event: RunEvent) => void;
 
+const RUNS_FILE = "runs.json";
+
+// Persisted state structure
+interface PersistedState {
+  runs: Array<[string, Run]>;
+}
+
 // In-memory stores
 const runs = new Map<string, Run>();
 const subscribers = new Map<string, Set<EventSubscriber>>();
+
+/**
+ * Save current state to disk
+ */
+function persistState(): void {
+  const state: PersistedState = {
+    runs: Array.from(runs.entries()),
+  };
+  saveToFile(RUNS_FILE, state);
+}
+
+/**
+ * Load state from disk on startup
+ */
+function loadPersistedState(): void {
+  const state = loadFromFile<PersistedState>(RUNS_FILE);
+  if (state) {
+    runs.clear();
+    for (const [id, run] of state.runs) {
+      runs.set(id, run);
+      subscribers.set(id, new Set());
+    }
+    console.log(`Loaded ${runs.size} run(s) from disk`);
+  }
+}
+
+// Load persisted state on module initialization
+loadPersistedState();
 
 /**
  * Create a new run in "queued" status
@@ -48,6 +86,7 @@ export function createRun(message: string): Run {
   };
   runs.set(id, run);
   subscribers.set(id, new Set());
+  persistState();
   return run;
 }
 
@@ -89,6 +128,8 @@ export function appendEvent(
     run.status = "failed";
   }
 
+  persistState();
+
   // Notify all subscribers
   const runSubscribers = subscribers.get(runId);
   if (runSubscribers) {
@@ -112,6 +153,7 @@ export function setOutput(runId: string, reply: string): void {
     return; // Run may have been cleared (e.g., by tests)
   }
   run.output = { reply };
+  persistState();
 }
 
 /**
@@ -124,6 +166,7 @@ export function setError(runId: string, message: string): void {
     return; // Run may have been cleared (e.g., by tests)
   }
   run.error = { message };
+  persistState();
 }
 
 /**
@@ -162,4 +205,5 @@ export function isTerminal(runId: string): boolean {
 export function clearRuns(): void {
   runs.clear();
   subscribers.clear();
+  clearFile(RUNS_FILE);
 }

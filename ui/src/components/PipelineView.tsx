@@ -12,6 +12,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { PipelineChat } from "./PipelineChat";
 import { PipelineProgress } from "./PipelineProgress";
+import { StatusPanel } from "./StatusPanel";
+import { ActivityStream } from "./ActivityStream";
+import { ResponseLog } from "./ResponseLog";
+import { ArtifactPanel } from "./artifacts";
+import { FlowSuggestionsButton } from "./FlowSuggestionsButton";
 
 interface PipelineViewProps {
   pipelineId: string;
@@ -44,7 +49,8 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
           event.type.includes("failed") ||
           event.type === "requirements_ready" ||
           event.type === "paused" ||
-          event.type === "resumed"
+          event.type === "resumed" ||
+          event.type === "screenshot_captured"
         ) {
           getPipeline(pipelineId).then(setPipeline).catch(console.error);
         }
@@ -129,10 +135,18 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
               Abort
             </Button>
           )}
+          {isTerminal && (
+            <FlowSuggestionsButton pipelineId={pipelineId} />
+          )}
           {onClose && (
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              Close
-            </Button>
+            <>
+              <Button size="sm" onClick={onClose}>
+                New Pipeline
+              </Button>
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                Close
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -203,75 +217,35 @@ function ImplementationView({
   pipeline: Pipeline;
   events: PipelineEvent[];
 }) {
-  // Filter to implementation-related events
-  const implEvents = events.filter(
-    (e) =>
-      e.type.includes("planning") ||
-      e.type.includes("executing") ||
-      e.type.includes("testing") ||
-      e.type.includes("requirement") ||
-      e.type === "agent_message" ||
-      e.type === "test_passed" ||
-      e.type === "test_failed" ||
-      e.type === "retry_started"
-  );
-
   return (
     <div className="flex flex-col gap-4 h-full">
-      {/* Requirements list */}
-      {pipeline.requirements.length > 0 && (
-        <Card>
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm">
-              Requirements ({pipeline.phase.requirementIndex + 1} /{" "}
-              {pipeline.phase.totalRequirements})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="max-h-48 overflow-y-auto">
-            <div className="space-y-2">
-              {pipeline.requirements.map((req, i) => (
-                <div
-                  key={req.id}
-                  className={cn(
-                    "flex items-center gap-2 text-sm py-1",
-                    i === pipeline.phase.requirementIndex && "font-medium"
-                  )}
-                >
-                  <RequirementStatusIcon status={req.status} />
-                  <span
-                    className={cn(
-                      req.status === "completed" && "text-green-700",
-                      req.status === "failed" && "text-red-700",
-                      req.status === "in_progress" && "text-blue-700"
-                    )}
-                  >
-                    {req.title}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Status Panel */}
+      <StatusPanel events={events} currentPhase={pipeline.phase.current} />
 
-      {/* Event feed */}
-      <Card className="flex-1 overflow-hidden flex flex-col">
-        <CardHeader className="py-3">
-          <CardTitle className="text-sm">Activity</CardTitle>
-        </CardHeader>
-        <CardContent className="flex-1 overflow-y-auto">
-          <div className="space-y-2">
-            {implEvents.map((event, i) => (
-              <EventItem key={i} event={event} />
-            ))}
-            {implEvents.length === 0 && (
-              <div className="text-gray-400 text-sm">
-                Waiting for implementation to start...
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      {/* Side-by-side content area */}
+      <div className="flex-1 flex gap-4 min-h-0">
+        {/* Activity Stream - Left */}
+        <div className="w-1/2">
+          <ActivityStream events={events} />
+        </div>
+
+        {/* Response Log - Right */}
+        <div className="w-1/2">
+          <ResponseLog
+            events={events}
+            requirements={pipeline.requirements}
+          />
+        </div>
+      </div>
+
+      {/* Artifacts Panel - Full width below */}
+      {pipeline.artifacts && pipeline.artifacts.length > 0 && (
+        <ArtifactPanel
+          pipelineId={pipeline.id}
+          artifacts={pipeline.artifacts}
+          requirements={pipeline.requirements}
+        />
+      )}
     </div>
   );
 }
@@ -291,78 +265,4 @@ function RequirementStatusIcon({
     default:
       return <span className="text-gray-300">&#9675;</span>;
   }
-}
-
-function EventItem({ event }: { event: PipelineEvent }) {
-  const getEventLabel = (type: PipelineEvent["type"]): string => {
-    const labels: Partial<Record<PipelineEvent["type"], string>> = {
-      planning_started: "Planning",
-      planning_completed: "Plan Ready",
-      executing_started: "Executing",
-      executing_completed: "Code Written",
-      testing_started: "Testing",
-      testing_completed: "Tests Done",
-      requirement_started: "Starting",
-      requirement_completed: "Completed",
-      requirement_failed: "Failed",
-      test_passed: "Test Passed",
-      test_failed: "Test Failed",
-      retry_started: "Retrying",
-      agent_message: "Agent",
-    };
-    return labels[type] || type;
-  };
-
-  const getEventColor = (type: PipelineEvent["type"]): string => {
-    if (type.includes("completed") || type === "test_passed") {
-      return "text-green-600";
-    }
-    if (type.includes("failed")) {
-      return "text-red-600";
-    }
-    if (type.includes("started")) {
-      return "text-blue-600";
-    }
-    if (type === "retry_started") {
-      return "text-yellow-600";
-    }
-    return "text-gray-600";
-  };
-
-  return (
-    <div className="flex gap-3 text-sm py-2 border-b border-gray-100 last:border-0">
-      <span className="text-gray-400 text-xs font-mono w-20 flex-shrink-0">
-        {new Date(event.ts).toLocaleTimeString()}
-      </span>
-      <span className={cn("font-medium w-24 flex-shrink-0", getEventColor(event.type))}>
-        {getEventLabel(event.type)}
-      </span>
-      <span className="text-gray-600 flex-1">
-        {formatEventContent(event)}
-      </span>
-    </div>
-  );
-}
-
-function formatEventContent(event: PipelineEvent): string {
-  const data = event.data;
-
-  if (event.type === "agent_message" && "content" in data) {
-    const content = String(data.content);
-    return content.length > 100 ? content.slice(0, 100) + "..." : content;
-  }
-
-  if ("requirementId" in data) {
-    return String(data.requirementId);
-  }
-
-  if ("error" in data) {
-    return String(data.error);
-  }
-
-  if ("attempt" in data && "maxAttempts" in data) {
-    return `Attempt ${data.attempt} of ${data.maxAttempts}`;
-  }
-
-  return "";
 }

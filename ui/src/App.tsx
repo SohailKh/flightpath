@@ -9,6 +9,8 @@ import {
   subscribeToRunEvents,
   createPipeline,
   getPipelines,
+  abortPipeline,
+  PipelineConflictError,
 } from "./lib/api";
 import type { Run, RunEvent, PipelineSummary } from "./types";
 import { cn } from "./lib/utils";
@@ -125,8 +127,27 @@ function App() {
       const { pipelines } = await getPipelines();
       setPipelines(pipelines);
     } catch (err) {
-      console.error("Failed to create pipeline:", err);
-      alert(err instanceof Error ? err.message : "Failed to create pipeline");
+      if (err instanceof PipelineConflictError) {
+        const shouldAbort = confirm(
+          "A pipeline is already active. Would you like to abort it and start a new one?"
+        );
+        if (shouldAbort) {
+          try {
+            await abortPipeline(err.activePipelineId);
+            // Retry creating the pipeline
+            const { pipelineId } = await createPipeline(initialPrompt);
+            setActivePipelineId(pipelineId);
+            const { pipelines } = await getPipelines();
+            setPipelines(pipelines);
+          } catch (retryErr) {
+            console.error("Failed to abort and create pipeline:", retryErr);
+            alert(retryErr instanceof Error ? retryErr.message : "Failed to create pipeline");
+          }
+        }
+      } else {
+        console.error("Failed to create pipeline:", err);
+        alert(err instanceof Error ? err.message : "Failed to create pipeline");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -134,11 +155,10 @@ function App() {
 
   const handlePipelineClose = useCallback(() => {
     setActivePipelineId(null);
-    // Refresh pipelines list
+    // Refresh pipelines list only, don't restore activePipelineId
     getPipelines()
-      .then(({ pipelines, activePipelineId }) => {
+      .then(({ pipelines }) => {
         setPipelines(pipelines);
-        setActivePipelineId(activePipelineId);
       })
       .catch(console.error);
   }, []);
@@ -203,6 +223,7 @@ function App() {
                   onSubmit={handleStartPipeline}
                   disabled={isLoading}
                   placeholder="Describe the feature you want to build..."
+                  defaultValue={"an app where users can tap a button to randomly change the number for everyone else"}
                   buttonText={isLoading ? "Starting..." : "Start Pipeline"}
                 />
                 {/* Previous pipelines */}
