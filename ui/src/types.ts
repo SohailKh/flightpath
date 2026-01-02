@@ -81,6 +81,8 @@ export type PipelineEventType =
   | "tool_completed"
   | "tool_error"
   | "status_update"
+  // Todo updates from agent
+  | "todo_update"
   // Parallel exploration
   | "parallel_exploration_started"
   | "parallel_exploration_completed"
@@ -98,11 +100,25 @@ export interface ToolEventData {
   result?: string;
   error?: string;
   phase?: PipelinePhase;
+  outcome?: "success" | "warning";
 }
 
 // Status update data for status_update events
 export interface StatusUpdateData {
   action: string;
+  phase: PipelinePhase;
+}
+
+// Todo item from SDK structured output
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm: string;
+}
+
+// Todo event data for todo_update events
+export interface TodoEventData {
+  todos: TodoItem[];
   phase: PipelinePhase;
 }
 
@@ -119,6 +135,26 @@ export interface Requirement {
   priority: number;
   status: "pending" | "in_progress" | "completed" | "failed";
   acceptanceCriteria: string[];
+}
+
+export interface EpicProgress {
+  total: number;
+  completed: number;
+  failed: number;
+  inProgress: number;
+}
+
+export interface Epic {
+  id: string;
+  title: string;
+  goal: string;
+  priority: number;
+  definitionOfDone: string;
+  keyScreens: string[];
+  smokeTestIds: string[];
+  requirementIds: string[];
+  status: "pending" | "in_progress" | "completed" | "partial";
+  progress: EpicProgress;
 }
 
 export interface ArtifactRef {
@@ -165,6 +201,7 @@ export interface Pipeline {
   phase: PhaseState;
   input: { initialPrompt: string };
   requirements: Requirement[];
+  epics: Epic[];
   currentRunId?: string;
   artifacts: ArtifactRef[];
   events: PipelineEvent[];

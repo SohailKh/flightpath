@@ -1,0 +1,127 @@
+{
+  "featurePrefix": "cmw",
+  "generatedAt": "2025-01-01T00:00:00Z",
+  "smokeTests": [
+    {
+      "id": "smoke-001",
+      "title": "Homepage Loads Successfully",
+      "platform": "mobile",
+      "epicId": "epic-homepage",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "cmw-013" },
+      "preconditions": ["Server running", "Database connected"],
+      "steps": [
+        "launchApp",
+        "assertVisible:testId=nav-logo",
+        "assertVisible:testId=hero-section",
+        "screenshot:name=homepage-loaded"
+      ]
+    },
+    {
+      "id": "smoke-002",
+      "title": "Navigation Works",
+      "platform": "mobile",
+      "epicId": "epic-homepage",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "cmw-037" },
+      "preconditions": ["Homepage loaded"],
+      "steps": [
+        "tap:testId=nav-services",
+        "assertVisible:testId=services-page",
+        "tap:testId=nav-portfolio",
+        "assertVisible:testId=portfolio-page",
+        "screenshot:name=navigation-working"
+      ]
+    },
+    {
+      "id": "smoke-003",
+      "title": "Portfolio Filter Works",
+      "platform": "mobile",
+      "epicId": "epic-portfolio",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "cmw-038" },
+      "preconditions": ["Portfolio page loaded", "Projects seeded"],
+      "steps": [
+        "tap:testId=nav-portfolio",
+        "assertVisible:testId=filter-all",
+        "tap:testId=filter-kitchen",
+        "assertVisible:testId=project-card-1",
+        "screenshot:name=portfolio-filtered"
+      ]
+    },
+    {
+      "id": "smoke-004",
+      "title": "Project Detail View",
+      "platform": "mobile",
+      "epicId": "epic-portfolio",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "cmw-038" },
+      "preconditions": ["Portfolio loaded"],
+      "steps": [
+        "tap:testId=project-card-1",
+        "assertVisible:testId=project-images",
+        "assertVisible:testId=back-to-portfolio",
+        "tap:testId=back-to-portfolio",
+        "assertVisible:testId=portfolio-page",
+        "screenshot:name=project-detail"
+      ]
+    },
+    {
+      "id": "smoke-005",
+      "title": "Contact Form Submission",
+      "platform": "mobile",
+      "epicId": "epic-lead-gen",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "cmw-039" },
+      "preconditions": ["Contact page accessible"],
+      "steps": [
+        "tap:testId=nav-contact",
+        "type:testId=contact-name value=Test User",
+        "type:testId=contact-email value=test@example.com",
+        "type:testId=contact-phone value=555-1234",
+        "type:testId=contact-message value=Test message",
+        "tap:testId=contact-submit",
+        "wait:ms=2000",
+        "assertVisible:testId=contact-success",
+        "screenshot:name=contact-submitted"
+      ]
+    },
+    {
+      "id": "smoke-006",
+      "title": "Booking Calendar Flow",
+      "platform": "mobile",
+      "epicId": "epic-booking",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "cmw-040" },
+      "preconditions": ["Booking page accessible", "Available slots exist"],
+      "steps": [
+        "tap:testId=nav-book",
+        "assertVisible:testId=booking-calendar",
+        "tap:testId=date-2025-02-15",
+        "tap:testId=time-slot-10-00",
+        "type:testId=booking-name value=Test Client",
+        "type:testId=booking-email value=client@test.com",
+        "type:testId=booking-phone value=555-5678",
+        "tap:testId=booking-submit",
+        "wait:ms=2000",
+        "assertVisible:testId=booking-confirmation",
+        "screenshot:name=booking-confirmed"
+      ]
+    },
+    {
+      "id": "smoke-007",
+      "title": "Testimonials Display",
+      "platform": "mobile",
+      "epicId": "epic-credibility",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "cmw-027" },
+      "preconditions": ["Testimonials seeded"],
+      "steps": [
+        "tap:testId=nav-testimonials",
+        "assertVisible:testId=testimonial-1",
+        "assertVisible:testId=testimonial-2",
+        "screenshot:name=testimonials-page"
+      ]
+    }
+  ]
+}

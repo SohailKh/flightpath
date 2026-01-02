@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import type { PipelineEvent, AskUserQuestion, Requirement } from "../types";
+import type { PipelineEvent, AskUserQuestion, Requirement, ToolEventData } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { QuestionCard } from "./QuestionCard";
@@ -118,6 +118,21 @@ export function ResponseLog({
           timestamp: event.ts,
           phase,
         });
+      } else if (event.type === "tool_started") {
+        // Detect AskUserQuestion tool calls for immediate question display
+        const data = event.data as unknown as ToolEventData;
+        if (data.toolName === "AskUserQuestion") {
+          const args = data.args as { questions?: AskUserQuestion[] };
+          if (args?.questions?.length) {
+            entries.push({
+              type: "message",
+              role: "assistant",
+              content: "",
+              timestamp: event.ts,
+              userQuestions: args.questions,
+            });
+          }
+        }
       }
     }
 
@@ -126,19 +141,26 @@ export function ResponseLog({
 
   // Ensure QuestionCard renders immediately when questions arrive
   useEffect(() => {
-    const lastNonStreaming = events
+    const lastQuestionEvent = events
       .slice()
       .reverse()
-      .find(
-        (e) =>
-          e.type === "agent_message" &&
-          "content" in e.data &&
-          !e.data.streaming &&
-          (e.data as { userQuestions?: AskUserQuestion[] }).userQuestions?.length
-      );
+      .find((e) => {
+        // Check agent_message with questions
+        if (e.type === "agent_message" && "content" in e.data && !e.data.streaming) {
+          return (e.data as { userQuestions?: AskUserQuestion[] }).userQuestions?.length;
+        }
+        // Check tool_started for AskUserQuestion (for immediate display)
+        if (e.type === "tool_started") {
+          const data = e.data as unknown as ToolEventData;
+          if (data.toolName === "AskUserQuestion") {
+            return (data.args as { questions?: AskUserQuestion[] })?.questions?.length;
+          }
+        }
+        return false;
+      });
 
-    if (lastNonStreaming && lastNonStreaming.ts !== lastQuestionTsRef.current) {
-      lastQuestionTsRef.current = lastNonStreaming.ts;
+    if (lastQuestionEvent && lastQuestionEvent.ts !== lastQuestionTsRef.current) {
+      lastQuestionTsRef.current = lastQuestionEvent.ts;
       forceRender({});
     }
   }, [events]);

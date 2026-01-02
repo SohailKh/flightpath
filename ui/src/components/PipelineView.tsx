@@ -13,7 +13,7 @@ import { Button } from "./ui/button";
 import { PipelineChat } from "./PipelineChat";
 import { PipelineProgress } from "./PipelineProgress";
 import { ActivityStream } from "./ActivityStream";
-import { ResponseLog } from "./ResponseLog";
+import { EpicsProgressPanel } from "./EpicsProgressPanel";
 import { ArtifactPanel } from "./artifacts";
 import { FlowSuggestionsButton } from "./FlowSuggestionsButton";
 
@@ -227,11 +227,12 @@ function ImplementationView({
           <ActivityStream events={events} currentPhase={pipeline.phase.current} />
         </div>
 
-        {/* Response Log - Right */}
+        {/* Epics Progress Panel - Right (with Messages tab) */}
         <div className="w-1/2 h-full">
-          <ResponseLog
+          <EpicsProgressPanel
             events={events}
             requirements={pipeline.requirements}
+            epics={pipeline.epics}
           />
         </div>
       </div>

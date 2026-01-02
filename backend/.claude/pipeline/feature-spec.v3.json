@@ -1,0 +1,1100 @@
+{
+  "schemaVersion": 3,
+  "featureName": "Construction Marketing Website",
+  "featurePrefix": "cmw",
+  "createdAt": "2025-01-01T00:00:00Z",
+  "primaryPlatform": "backend",
+  "generatedSkills": [],
+  "epics": [
+    {
+      "id": "epic-homepage",
+      "title": "Homepage & Navigation",
+      "goal": "Professional landing page with clear value proposition and navigation",
+      "priority": 1,
+      "definitionOfDone": "Homepage loads with hero, services overview, and navigation to all sections",
+      "keyScreens": ["/", "/services"],
+      "smokeTestIds": ["smoke-001", "smoke-002"]
+    },
+    {
+      "id": "epic-portfolio",
+      "title": "Portfolio Showcase",
+      "goal": "Service-organized galleries showcasing completed projects",
+      "priority": 2,
+      "definitionOfDone": "All service galleries display with filtering and project details",
+      "keyScreens": ["/portfolio", "/portfolio/kitchen-bath", "/portfolio/[project-id]"],
+      "smokeTestIds": ["smoke-003", "smoke-004"]
+    },
+    {
+      "id": "epic-lead-gen",
+      "title": "Lead Generation",
+      "goal": "Contact form capturing and routing leads effectively",
+      "priority": 3,
+      "definitionOfDone": "Contact form submits successfully with email notifications",
+      "keyScreens": ["/contact"],
+      "smokeTestIds": ["smoke-005"]
+    },
+    {
+      "id": "epic-booking",
+      "title": "Appointment Booking",
+      "goal": "Calendar-based consultation booking system",
+      "priority": 4,
+      "definitionOfDone": "Users can select dates and book appointments with confirmations",
+      "keyScreens": ["/book-consultation"],
+      "smokeTestIds": ["smoke-006"]
+    },
+    {
+      "id": "epic-credibility",
+      "title": "Trust & Credibility",
+      "goal": "Testimonials and company information building trust",
+      "priority": 5,
+      "definitionOfDone": "About page and testimonials display properly",
+      "keyScreens": ["/about", "/testimonials"],
+      "smokeTestIds": ["smoke-007"]
+    }
+  ],
+  "requirements": [
+    {
+      "id": "cmw-001",
+      "epicId": "epic-homepage",
+      "area": "backend-db",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 1,
+      "dependencies": [],
+      "title": "Database Schema Setup",
+      "description": "Create PostgreSQL database schema for all website entities",
+      "acceptanceCriteria": [
+        "Projects table with fields for service type, title, description, images",
+        "Testimonials table with client name, project, rating, content",
+        "Appointments table with date, time, service, contact info",
+        "Contact submissions table with form data and timestamp",
+        "Database migrations set up and versioned"
+      ],
+      "files": ["backend/migrations/001_initial_schema.sql", "backend/models/index.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-002",
+      "epicId": "epic-homepage",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 1,
+      "dependencies": [],
+      "title": "Express Server Setup",
+      "description": "Initialize Express.js server with basic middleware",
+      "acceptanceCriteria": [
+        "Express server configured with CORS, body parser, static file serving",
+        "Environment variables for database connection, API keys",
+        "Basic error handling middleware",
+        "Request logging middleware"
+      ],
+      "files": ["backend/server.js", "backend/config/middleware.js", "backend/.env.example"],
+      "notes": []
+    },
+    {
+      "id": "cmw-003",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-001"],
+      "platform": "backend",
+      "priority": 2,
+      "dependencies": ["cmw-002"],
+      "title": "Homepage Hero Section",
+      "description": "Create responsive hero section with company branding",
+      "acceptanceCriteria": [
+        "Full-width hero image with overlay text",
+        "Company logo and tagline prominently displayed",
+        "Call-to-action buttons for 'Get Quote' and 'View Portfolio'",
+        "Responsive design for mobile, tablet, desktop",
+        "Smooth scroll to next section"
+      ],
+      "files": ["frontend/components/Hero.jsx", "frontend/styles/hero.css"],
+      "notes": []
+    },
+    {
+      "id": "cmw-004",
+      "epicId": "epic-homepage",
+      "area": "mobile-nav",
+      "smokeTestRefs": ["smoke-001", "smoke-002"],
+      "platform": "backend",
+      "priority": 2,
+      "dependencies": ["cmw-002"],
+      "title": "Main Navigation Header",
+      "description": "Sticky navigation header with responsive mobile menu",
+      "acceptanceCriteria": [
+        "Logo on left, menu items on right",
+        "Sticky header on scroll with background transition",
+        "Mobile hamburger menu for small screens",
+        "Active page highlighting",
+        "Links to: Home, Services, Portfolio, About, Testimonials, Contact, Book"
+      ],
+      "files": ["frontend/components/Navigation.jsx", "frontend/styles/navigation.css"],
+      "notes": []
+    },
+    {
+      "id": "cmw-005",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-001"],
+      "platform": "backend",
+      "priority": 3,
+      "dependencies": ["cmw-003"],
+      "title": "Services Overview Cards",
+      "description": "Grid of service cards on homepage",
+      "acceptanceCriteria": [
+        "4 cards: Custom Homes, Renovations, Kitchen & Bath, Additions",
+        "Each card has icon, title, brief description, 'Learn More' link",
+        "Hover effects and animations",
+        "Responsive grid layout (2x2 desktop, 1 column mobile)",
+        "Links to individual service pages"
+      ],
+      "files": ["frontend/components/ServiceCards.jsx", "frontend/styles/services.css"],
+      "notes": []
+    },
+    {
+      "id": "cmw-006",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-001"],
+      "platform": "backend",
+      "priority": 4,
+      "dependencies": ["cmw-005"],
+      "title": "Homepage Experience Banner",
+      "description": "Statistics banner highlighting experience",
+      "acceptanceCriteria": [
+        "40+ Years Experience prominently displayed",
+        "15+ Years specific experience highlight",
+        "Number of completed projects if available",
+        "Animated number counting effect on scroll",
+        "Background pattern or image"
+      ],
+      "files": ["frontend/components/ExperienceBanner.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-007",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 5,
+      "dependencies": [],
+      "title": "Footer Component",
+      "description": "Site footer with contact info and links",
+      "acceptanceCriteria": [
+        "Company logo and brief description",
+        "Service area: Orange County & San Diego County",
+        "Quick links to main pages",
+        "Contact information",
+        "Copyright and license numbers",
+        "Social media icons if applicable"
+      ],
+      "files": ["frontend/components/Footer.jsx", "frontend/styles/footer.css"],
+      "notes": []
+    },
+    {
+      "id": "cmw-008",
+      "epicId": "epic-portfolio",
+      "area": "backend-routes",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 6,
+      "dependencies": ["cmw-001", "cmw-002"],
+      "title": "Portfolio API Endpoints",
+      "description": "RESTful API for portfolio projects",
+      "acceptanceCriteria": [
+        "GET /api/projects - list all with optional service type filter",
+        "GET /api/projects/:id - single project details",
+        "GET /api/projects/featured - featured projects for homepage",
+        "Pagination support for project lists",
+        "Image URL handling for project photos"
+      ],
+      "files": ["backend/routes/projects.js", "backend/controllers/projectController.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-009",
+      "epicId": "epic-portfolio",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-003"],
+      "platform": "backend",
+      "priority": 7,
+      "dependencies": ["cmw-008"],
+      "title": "Portfolio Landing Page",
+      "description": "Main portfolio page with service type filtering",
+      "acceptanceCriteria": [
+        "Hero section with 'Our Work' title",
+        "Service type filter buttons: All, Custom Homes, Renovations, Kitchen & Bath, Additions",
+        "Active filter highlighting",
+        "Smooth transition when filtering",
+        "Results count display"
+      ],
+      "files": ["frontend/pages/portfolio.jsx", "frontend/components/PortfolioFilter.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-010",
+      "epicId": "epic-portfolio",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-003", "smoke-004"],
+      "platform": "backend",
+      "priority": 8,
+      "dependencies": ["cmw-009"],
+      "title": "Project Gallery Grid",
+      "description": "Responsive grid displaying project thumbnails",
+      "acceptanceCriteria": [
+        "3-column grid on desktop, 2 on tablet, 1 on mobile",
+        "Each project shows main image, title, service type badge",
+        "Hover overlay with 'View Project' button",
+        "Lazy loading for images",
+        "Click through to project detail page"
+      ],
+      "files": ["frontend/components/ProjectGrid.jsx", "frontend/components/ProjectCard.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-011",
+      "epicId": "epic-portfolio",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-004"],
+      "platform": "backend",
+      "priority": 9,
+      "dependencies": ["cmw-010"],
+      "title": "Project Detail Page",
+      "description": "Individual project showcase page",
+      "acceptanceCriteria": [
+        "Large hero image or carousel for multiple images",
+        "Project title and service type",
+        "Project description and scope details",
+        "Before/after image comparison if applicable",
+        "Back to portfolio button",
+        "Next/Previous project navigation"
+      ],
+      "files": ["frontend/pages/portfolio/[id].jsx", "frontend/components/ImageCarousel.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-012",
+      "epicId": "epic-portfolio",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 10,
+      "dependencies": ["cmw-011"],
+      "title": "Before/After Image Slider",
+      "description": "Interactive slider for renovation projects",
+      "acceptanceCriteria": [
+        "Draggable slider to reveal before/after",
+        "Touch-friendly for mobile devices",
+        "Labels for 'Before' and 'After'",
+        "Smooth animation",
+        "Fallback for projects without before/after"
+      ],
+      "files": ["frontend/components/BeforeAfterSlider.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-013",
+      "epicId": "epic-lead-gen",
+      "area": "backend-routes",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 11,
+      "dependencies": ["cmw-001", "cmw-002"],
+      "title": "Contact Form API",
+      "description": "Backend endpoint for contact form submissions",
+      "acceptanceCriteria": [
+        "POST /api/contact endpoint",
+        "Validate required fields: name, email, phone, message",
+        "Store submission in database",
+        "Send email notification to business owner",
+        "Return success/error response"
+      ],
+      "files": ["backend/routes/contact.js", "backend/services/emailService.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-014",
+      "epicId": "epic-lead-gen",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 12,
+      "dependencies": ["cmw-013"],
+      "title": "Email Service Configuration",
+      "description": "Set up email sending capability",
+      "acceptanceCriteria": [
+        "Configure SMTP or email service (SendGrid, etc.)",
+        "Email templates for contact form notifications",
+        "Environment variables for email settings",
+        "Error handling for failed sends",
+        "Email queue for reliability"
+      ],
+      "files": ["backend/config/email.js", "backend/templates/contact-notification.html"],
+      "notes": []
+    },
+    {
+      "id": "cmw-015",
+      "epicId": "epic-lead-gen",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-005"],
+      "platform": "backend",
+      "priority": 13,
+      "dependencies": ["cmw-013"],
+      "title": "Contact Page Layout",
+      "description": "Contact page with form and business information",
+      "acceptanceCriteria": [
+        "Page title and introduction text",
+        "Contact form on left side",
+        "Business info on right: phone, email, service areas",
+        "Map showing service areas or office location",
+        "Responsive single column on mobile"
+      ],
+      "files": ["frontend/pages/contact.jsx", "frontend/styles/contact.css"],
+      "notes": []
+    },
+    {
+      "id": "cmw-016",
+      "epicId": "epic-lead-gen",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-005"],
+      "platform": "backend",
+      "priority": 14,
+      "dependencies": ["cmw-015"],
+      "title": "Contact Form Component",
+      "description": "General contact form with validation",
+      "acceptanceCriteria": [
+        "Fields: Name, Email, Phone, Service Interest dropdown, Message",
+        "Client-side validation with error messages",
+        "Loading state during submission",
+        "Success message after submission",
+        "Clear form after successful submit"
+      ],
+      "files": ["frontend/components/ContactForm.jsx", "frontend/utils/validation.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-017",
+      "epicId": "epic-lead-gen",
+      "area": "mobile-state",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 15,
+      "dependencies": ["cmw-016"],
+      "title": "Form State Management",
+      "description": "State handling for form submissions",
+      "acceptanceCriteria": [
+        "Form state with field values and errors",
+        "Submission status tracking",
+        "API call integration",
+        "Error handling and display",
+        "Form reset functionality"
+      ],
+      "files": ["frontend/hooks/useContactForm.js", "frontend/services/api.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-018",
+      "epicId": "epic-booking",
+      "area": "backend-db",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 16,
+      "dependencies": ["cmw-001"],
+      "title": "Appointment Availability Schema",
+      "description": "Database structure for appointment slots",
+      "acceptanceCriteria": [
+        "Available time slots table",
+        "Booked appointments table",
+        "Recurring availability rules",
+        "Block-out dates for holidays/unavailable times",
+        "Time zone handling"
+      ],
+      "files": ["backend/migrations/002_appointments.sql", "backend/models/appointment.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-019",
+      "epicId": "epic-booking",
+      "area": "backend-routes",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 17,
+      "dependencies": ["cmw-018"],
+      "title": "Booking API Endpoints",
+      "description": "REST API for appointment booking",
+      "acceptanceCriteria": [
+        "GET /api/appointments/available - available slots for date range",
+        "POST /api/appointments/book - create new appointment",
+        "Prevent double-booking logic",
+        "Email confirmation on booking",
+        "Validation for all required fields"
+      ],
+      "files": ["backend/routes/appointments.js", "backend/controllers/appointmentController.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-020",
+      "epicId": "epic-booking",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-006"],
+      "platform": "backend",
+      "priority": 18,
+      "dependencies": ["cmw-019"],
+      "title": "Booking Page Layout",
+      "description": "Appointment booking page structure",
+      "acceptanceCriteria": [
+        "Page title and instructions",
+        "Calendar component on left",
+        "Selected date/time display",
+        "Contact form on right",
+        "Service type selection",
+        "Mobile-responsive design"
+      ],
+      "files": ["frontend/pages/book-consultation.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-021",
+      "epicId": "epic-booking",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-006"],
+      "platform": "backend",
+      "priority": 19,
+      "dependencies": ["cmw-020"],
+      "title": "Calendar Component",
+      "description": "Interactive calendar for date selection",
+      "acceptanceCriteria": [
+        "Monthly calendar view",
+        "Highlight available dates",
+        "Disable past dates and unavailable dates",
+        "Click to select date",
+        "Show available time slots for selected date",
+        "Mobile-friendly touch interactions"
+      ],
+      "files": ["frontend/components/BookingCalendar.jsx", "frontend/components/TimeSlotPicker.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-022",
+      "epicId": "epic-booking",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-006"],
+      "platform": "backend",
+      "priority": 20,
+      "dependencies": ["cmw-021"],
+      "title": "Booking Form Component",
+      "description": "Form to complete appointment booking",
+      "acceptanceCriteria": [
+        "Pre-filled selected date/time",
+        "Service type dropdown",
+        "Name, email, phone fields",
+        "Project description textarea",
+        "Submit button with loading state",
+        "Confirmation message display"
+      ],
+      "files": ["frontend/components/BookingForm.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-023",
+      "epicId": "epic-booking",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 21,
+      "dependencies": ["cmw-019", "cmw-014"],
+      "title": "Booking Confirmation Emails",
+      "description": "Email templates for appointment confirmations",
+      "acceptanceCriteria": [
+        "Customer confirmation email with appointment details",
+        "Business notification email for new bookings",
+        "Calendar invite attachment (.ics file)",
+        "Include cancellation/rescheduling instructions",
+        "Professional HTML email template"
+      ],
+      "files": ["backend/templates/booking-confirmation.html", "backend/services/calendarService.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-024",
+      "epicId": "epic-credibility",
+      "area": "backend-routes",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 22,
+      "dependencies": ["cmw-001"],
+      "title": "Testimonials API",
+      "description": "Endpoints for testimonial management",
+      "acceptanceCriteria": [
+        "GET /api/testimonials - list all approved testimonials",
+        "Support for featured testimonials flag",
+        "Include client name, project type, rating, content",
+        "Sort by date or rating",
+        "Pagination for testimonials page"
+      ],
+      "files": ["backend/routes/testimonials.js", "backend/controllers/testimonialController.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-025",
+      "epicId": "epic-credibility",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-007"],
+      "platform": "backend",
+      "priority": 23,
+      "dependencies": [],
+      "title": "About Page Layout",
+      "description": "Company information and team page",
+      "acceptanceCriteria": [
+        "Company history section with 40+ years highlight",
+        "Mission and values statements",
+        "Service area map or description",
+        "Certifications and awards section",
+        "Professional associations/memberships"
+      ],
+      "files": ["frontend/pages/about.jsx", "frontend/styles/about.css"],
+      "notes": []
+    },
+    {
+      "id": "cmw-026",
+      "epicId": "epic-credibility",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-001"],
+      "platform": "backend",
+      "priority": 24,
+      "dependencies": ["cmw-024"],
+      "title": "Homepage Testimonials Section",
+      "description": "Featured testimonials on homepage",
+      "acceptanceCriteria": [
+        "Section title: 'What Our Clients Say'",
+        "3 featured testimonials in carousel or grid",
+        "Client name, project type, star rating",
+        "Testimonial excerpt with 'Read More' link",
+        "Link to full testimonials page"
+      ],
+      "files": ["frontend/components/TestimonialCarousel.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-027",
+      "epicId": "epic-credibility",
+      "area": "mobile-ui",
+      "smokeTestRefs": ["smoke-007"],
+      "platform": "backend",
+      "priority": 25,
+      "dependencies": ["cmw-024"],
+      "title": "Testimonials Page",
+      "description": "Full testimonials listing page",
+      "acceptanceCriteria": [
+        "Page hero with title",
+        "Grid or list of all testimonials",
+        "Each shows: client name, project, rating, full text, date",
+        "Filter by service type or rating",
+        "Pagination or infinite scroll"
+      ],
+      "files": ["frontend/pages/testimonials.jsx", "frontend/components/TestimonialList.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-028",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 26,
+      "dependencies": [],
+      "title": "Service Detail Pages",
+      "description": "Individual pages for each service type",
+      "acceptanceCriteria": [
+        "Separate pages for: Custom Homes, Renovations, Kitchen & Bath, Additions",
+        "Service-specific hero image and description",
+        "Process timeline for that service",
+        "Related portfolio examples",
+        "Service-specific FAQ section",
+        "Call-to-action for consultation"
+      ],
+      "files": ["frontend/pages/services/[service].jsx", "frontend/data/serviceContent.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-029",
+      "epicId": "epic-homepage",
+      "area": "shared-contracts",
+      "smokeTestRefs": [],
+      "platform": "both",
+      "priority": 27,
+      "dependencies": [],
+      "title": "TypeScript Interfaces",
+      "description": "Shared type definitions for frontend/backend",
+      "acceptanceCriteria": [
+        "Project interface with all fields",
+        "Testimonial interface",
+        "Appointment interface",
+        "Contact form submission interface",
+        "API response wrapper types"
+      ],
+      "files": ["shared/types/index.ts", "shared/types/api.ts"],
+      "notes": []
+    },
+    {
+      "id": "cmw-030",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 28,
+      "dependencies": [],
+      "title": "Loading States",
+      "description": "Consistent loading indicators across the site",
+      "acceptanceCriteria": [
+        "Page-level loading spinner",
+        "Component-level skeleton screens",
+        "Form submission loading states",
+        "Image loading placeholders",
+        "Consistent animation style"
+      ],
+      "files": ["frontend/components/LoadingSpinner.jsx", "frontend/components/Skeleton.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-031",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 29,
+      "dependencies": [],
+      "title": "Error Handling Components",
+      "description": "User-friendly error states",
+      "acceptanceCriteria": [
+        "404 page with navigation back",
+        "500 error page",
+        "Component-level error boundaries",
+        "Form validation error display",
+        "Network error messages"
+      ],
+      "files": ["frontend/pages/404.jsx", "frontend/components/ErrorBoundary.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-032",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 30,
+      "dependencies": [],
+      "title": "SEO Meta Tags",
+      "description": "Search engine optimization setup",
+      "acceptanceCriteria": [
+        "Dynamic meta titles and descriptions per page",
+        "Open Graph tags for social sharing",
+        "Structured data for local business",
+        "XML sitemap generation",
+        "Robots.txt file"
+      ],
+      "files": ["frontend/components/SEOHead.jsx", "frontend/utils/seo.js", "public/robots.txt"],
+      "notes": []
+    },
+    {
+      "id": "cmw-033",
+      "epicId": "epic-portfolio",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 31,
+      "dependencies": [],
+      "title": "Image Upload Service",
+      "description": "Handle portfolio image uploads",
+      "acceptanceCriteria": [
+        "File upload endpoint with size limits",
+        "Image optimization and resizing",
+        "Multiple size generation (thumbnail, medium, large)",
+        "Cloud storage integration (S3 or similar)",
+        "Secure file type validation"
+      ],
+      "files": ["backend/services/imageService.js", "backend/config/storage.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-034",
+      "epicId": "epic-lead-gen",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 32,
+      "dependencies": [],
+      "title": "Form Spam Protection",
+      "description": "Protect forms from spam submissions",
+      "acceptanceCriteria": [
+        "Rate limiting per IP address",
+        "Honeypot field implementation",
+        "Optional reCAPTCHA integration",
+        "Submission pattern detection",
+        "Blocked IP management"
+      ],
+      "files": ["backend/middleware/antispam.js", "frontend/components/HoneypotField.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-035",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 33,
+      "dependencies": [],
+      "title": "Responsive Typography System",
+      "description": "Consistent typography across breakpoints",
+      "acceptanceCriteria": [
+        "Font size scale for headings and body text",
+        "Line height and spacing standards",
+        "Mobile-optimized font sizes",
+        "Consistent font loading strategy",
+        "Print stylesheet for content pages"
+      ],
+      "files": ["frontend/styles/typography.css", "frontend/styles/variables.css"],
+      "notes": []
+    },
+    {
+      "id": "cmw-036",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 34,
+      "dependencies": [],
+      "title": "Color Theme System",
+      "description": "Consistent color palette implementation",
+      "acceptanceCriteria": [
+        "CSS custom properties for brand colors",
+        "Consistent hover and active states",
+        "Accessible color contrast ratios",
+        "Color usage documentation",
+        "Dark mode preparation (CSS structure)"
+      ],
+      "files": ["frontend/styles/colors.css", "frontend/docs/design-system.md"],
+      "notes": []
+    },
+    {
+      "id": "cmw-037",
+      "epicId": "epic-homepage",
+      "area": "testability",
+      "smokeTestRefs": ["smoke-001", "smoke-002"],
+      "platform": "backend",
+      "priority": 35,
+      "dependencies": [],
+      "title": "Test IDs for Navigation",
+      "description": "Add test IDs to navigation elements",
+      "acceptanceCriteria": [
+        "testId on logo: 'nav-logo'",
+        "testId on menu items: 'nav-home', 'nav-services', etc.",
+        "testId on mobile menu button: 'nav-mobile-toggle'",
+        "testId on CTA buttons: 'nav-cta-quote', 'nav-cta-book'"
+      ],
+      "files": ["frontend/components/Navigation.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-038",
+      "epicId": "epic-portfolio",
+      "area": "testability",
+      "smokeTestRefs": ["smoke-003", "smoke-004"],
+      "platform": "backend",
+      "priority": 36,
+      "dependencies": [],
+      "title": "Test IDs for Portfolio",
+      "description": "Add test IDs to portfolio components",
+      "acceptanceCriteria": [
+        "testId on filter buttons: 'filter-all', 'filter-kitchen', etc.",
+        "testId on project cards: 'project-card-[id]'",
+        "testId on image carousel: 'project-images'",
+        "testId on back button: 'back-to-portfolio'"
+      ],
+      "files": ["frontend/components/PortfolioFilter.jsx", "frontend/components/ProjectCard.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-039",
+      "epicId": "epic-lead-gen",
+      "area": "testability",
+      "smokeTestRefs": ["smoke-005"],
+      "platform": "backend",
+      "priority": 37,
+      "dependencies": [],
+      "title": "Test IDs for Contact Form",
+      "description": "Add test IDs to form elements",
+      "acceptanceCriteria": [
+        "testId on form fields: 'contact-name', 'contact-email', etc.",
+        "testId on submit button: 'contact-submit'",
+        "testId on success message: 'contact-success'",
+        "testId on error messages: 'contact-error-[field]'"
+      ],
+      "files": ["frontend/components/ContactForm.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-040",
+      "epicId": "epic-booking",
+      "area": "testability",
+      "smokeTestRefs": ["smoke-006"],
+      "platform": "backend",
+      "priority": 38,
+      "dependencies": [],
+      "title": "Test IDs for Booking System",
+      "description": "Add test IDs to booking components",
+      "acceptanceCriteria": [
+        "testId on calendar: 'booking-calendar'",
+        "testId on date cells: 'date-[YYYY-MM-DD]'",
+        "testId on time slots: 'time-slot-[HH-MM]'",
+        "testId on booking form: 'booking-form'",
+        "testId on confirmation: 'booking-confirmation'"
+      ],
+      "files": ["frontend/components/BookingCalendar.jsx", "frontend/components/BookingForm.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-041",
+      "epicId": "epic-homepage",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 39,
+      "dependencies": [],
+      "title": "Performance Monitoring",
+      "description": "Track site performance metrics",
+      "acceptanceCriteria": [
+        "Page load time tracking",
+        "API response time logging",
+        "Error rate monitoring",
+        "Basic analytics integration",
+        "Performance budget alerts"
+      ],
+      "files": ["backend/middleware/performance.js", "frontend/utils/analytics.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-042",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 40,
+      "dependencies": [],
+      "title": "Accessibility Features",
+      "description": "Ensure WCAG 2.1 AA compliance",
+      "acceptanceCriteria": [
+        "Proper heading hierarchy",
+        "Alt text for all images",
+        "Keyboard navigation support",
+        "ARIA labels where needed",
+        "Focus indicators",
+        "Screen reader testing"
+      ],
+      "files": ["frontend/utils/accessibility.js", "frontend/components/SkipToContent.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-043",
+      "epicId": "epic-portfolio",
+      "area": "mobile-state",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 41,
+      "dependencies": ["cmw-008"],
+      "title": "Portfolio State Management",
+      "description": "Client-side state for portfolio filtering",
+      "acceptanceCriteria": [
+        "Store current filter selection",
+        "Cache fetched projects",
+        "Handle loading and error states",
+        "Pagination state tracking",
+        "URL sync for filter state"
+      ],
+      "files": ["frontend/store/portfolioStore.js", "frontend/hooks/usePortfolio.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-044",
+      "epicId": "epic-booking",
+      "area": "mobile-state",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 42,
+      "dependencies": ["cmw-019"],
+      "title": "Booking State Management",
+      "description": "State handling for booking flow",
+      "acceptanceCriteria": [
+        "Selected date and time storage",
+        "Available slots caching",
+        "Multi-step form state",
+        "Confirmation data handling",
+        "Session persistence"
+      ],
+      "files": ["frontend/store/bookingStore.js", "frontend/hooks/useBooking.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-045",
+      "epicId": "epic-homepage",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 43,
+      "dependencies": [],
+      "title": "Security Headers",
+      "description": "Implement security best practices",
+      "acceptanceCriteria": [
+        "Content Security Policy headers",
+        "X-Frame-Options for clickjacking protection",
+        "X-Content-Type-Options",
+        "Strict-Transport-Security for HTTPS",
+        "Referrer-Policy configuration"
+      ],
+      "files": ["backend/middleware/security.js", "backend/config/headers.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-046",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 44,
+      "dependencies": [],
+      "title": "Progressive Web App Setup",
+      "description": "Basic PWA configuration",
+      "acceptanceCriteria": [
+        "Web app manifest file",
+        "Service worker for offline basics",
+        "App icons in multiple sizes",
+        "Theme color configuration",
+        "Basic offline page"
+      ],
+      "files": ["public/manifest.json", "frontend/sw.js", "frontend/pages/offline.jsx"],
+      "notes": []
+    },
+    {
+      "id": "cmw-047",
+      "epicId": "epic-homepage",
+      "area": "backend-db",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 45,
+      "dependencies": [],
+      "title": "Database Backup Strategy",
+      "description": "Automated backup configuration",
+      "acceptanceCriteria": [
+        "Daily automated backups",
+        "Backup retention policy",
+        "Restoration procedure documented",
+        "Backup monitoring alerts",
+        "Test restoration process"
+      ],
+      "files": ["backend/scripts/backup.sh", "backend/docs/backup-restore.md"],
+      "notes": []
+    },
+    {
+      "id": "cmw-048",
+      "epicId": "epic-homepage",
+      "area": "backend-middleware",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 46,
+      "dependencies": [],
+      "title": "API Documentation",
+      "description": "Document all API endpoints",
+      "acceptanceCriteria": [
+        "OpenAPI/Swagger specification",
+        "Interactive API documentation page",
+        "Authentication details",
+        "Request/response examples",
+        "Error code documentation"
+      ],
+      "files": ["backend/swagger.yml", "backend/routes/docs.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-049",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 47,
+      "dependencies": [],
+      "title": "Cookie Consent Banner",
+      "description": "GDPR/CCPA compliance banner",
+      "acceptanceCriteria": [
+        "Cookie consent banner on first visit",
+        "Accept/Decline/Customize options",
+        "Cookie preference storage",
+        "Analytics opt-out integration",
+        "Privacy policy link"
+      ],
+      "files": ["frontend/components/CookieBanner.jsx", "frontend/utils/cookies.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-050",
+      "epicId": "epic-homepage",
+      "area": "mobile-ui",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 48,
+      "dependencies": [],
+      "title": "Social Proof Badges",
+      "description": "Trust indicators and certifications",
+      "acceptanceCriteria": [
+        "License number display",
+        "Insurance/bonding badges",
+        "Association memberships",
+        "Awards and certifications",
+        "Years in business badge"
+      ],
+      "files": ["frontend/components/TrustBadges.jsx", "frontend/data/certifications.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-051",
+      "epicId": "epic-lead-gen",
+      "area": "backend-routes",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 49,
+      "dependencies": [],
+      "title": "Lead Tracking Analytics",
+      "description": "Track lead sources and conversions",
+      "acceptanceCriteria": [
+        "UTM parameter capture",
+        "Referrer tracking",
+        "Form submission analytics",
+        "Lead source reporting",
+        "Conversion funnel tracking"
+      ],
+      "files": ["backend/services/analyticsService.js", "frontend/utils/tracking.js"],
+      "notes": []
+    },
+    {
+      "id": "cmw-052",
+      "epicId": "epic-homepage",
+      "area": "testability",
+      "smokeTestRefs": [],
+      "platform": "backend",
+      "priority": 50,
+      "dependencies": [],
+      "title": "Test Data Seeding",
+      "description": "Create test data for development",
+      "acceptanceCriteria": [
+        "Seed script for projects with images",
+        "Sample testimonials data",
+        "Test appointment slots",
+        "Development environment detection",
+        "Easy reset functionality"
+      ],
+      "files": ["backend/scripts/seed.js", "backend/data/testData.json"],
+      "notes": []
+    }
+  ]
+}

@@ -105,6 +105,7 @@ export interface PipelineAgentResult extends AgentResult {
   requiresUserInput: boolean;
   userQuestion?: string;
   userQuestions?: AskUserQuestion[];
+  structuredOutput?: unknown;
 }
 
 /**
@@ -239,16 +240,31 @@ function formatStatusAction(toolName: string, input: unknown): string {
       return `Editing ${truncatePath(String(args.file_path || ""))}`;
     case "Write":
       return `Writing ${truncatePath(String(args.file_path || ""))}`;
-    case "Bash":
-      return `Running: ${truncateStr(String(args.command || ""), 40)}`;
+    case "Bash": {
+      // Use Claude's description if provided, otherwise show the command
+      const desc = args.description as string | undefined;
+      if (desc) return desc;
+      return `Running: ${truncateStr(String(args.command || ""), 60)}`;
+    }
     case "Glob":
       return `Searching for ${args.pattern}`;
     case "Grep":
       return `Searching for "${truncateStr(String(args.pattern || ""), 30)}"`;
     case "WebFetch":
       return `Fetching ${truncateStr(String(args.url || ""), 40)}`;
-    case "Task":
+    case "Task": {
+      const desc = args.description as string | undefined;
+      if (desc) return desc;
       return `Running agent: ${args.subagent_type || "task"}`;
+    }
+    case "AskUserQuestion": {
+      const questions = args.questions as Array<{ header?: string; question?: string }> | undefined;
+      if (questions && questions.length > 0) {
+        const header = questions[0].header;
+        if (header) return `Asking: ${header}`;
+      }
+      return "Asking user...";
+    }
     default:
       return `${toolName}...`;
   }
@@ -323,9 +339,11 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
 
   const toolCalls: PipelineAgentResult["toolCalls"] = [];
   let resultText = "";
+  let structuredOutput: unknown;
   let requiresUserInput = false;
   let userQuestion: string | undefined;
   let userQuestions: AskUserQuestion[] = [];
+  const seenQuestionKeys = new Set<string>();
 
   // Track tool start times for duration calculation
   const toolStartTimes = new Map<string, number>();
@@ -349,6 +367,7 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
   }
 
   // Wrap execution in try/finally to ensure browser cleanup
+  let thinkingInterval: ReturnType<typeof setInterval> | null = null;
   try {
   const q = query({
     prompt: fullPrompt,
@@ -412,8 +431,15 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
                 requiresUserInput = true;
                 const toolInput = input.tool_input as { questions?: AskUserQuestion[] };
                 if (toolInput?.questions) {
-                  console.log(`[Agent] User input required: ${toolInput.questions.length} question(s)`);
-                  userQuestions.push(...toolInput.questions);
+                  // Deduplicate: only add questions we haven't seen before
+                  for (const q of toolInput.questions) {
+                    const key = `${q.header}:${q.question}`;
+                    if (!seenQuestionKeys.has(key)) {
+                      seenQuestionKeys.add(key);
+                      userQuestions.push(q);
+                    }
+                  }
+                  console.log(`[Agent] User input required: ${userQuestions.length} unique question(s)`);
                 }
                 toolCalls.push({
                   name: input.tool_name,
@@ -456,8 +482,20 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
 
   // Process agent messages
   const startTime = Date.now();
+  let lastActivityTime = Date.now();
+
+  // Periodic "thinking" status updates during long gaps
+  thinkingInterval = toolCallbacks ? setInterval(() => {
+    const idleTime = Date.now() - lastActivityTime;
+    if (idleTime > 30000) { // 30 seconds of no activity
+      toolCallbacks.onStatusUpdate?.("Analyzing...");
+    }
+  }, 15000) : null; // Check every 15 seconds
+
   const processAgent = async () => {
     for await (const msg of q) {
+      lastActivityTime = Date.now(); // Update activity time on any message
+
       // Handle streaming chunks if callback provided
       if (msg.type === "assistant" && onStreamChunk) {
         // The SDK might provide partial content
@@ -470,6 +508,7 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
         const result = msg as SDKResultMessage;
         if (result.subtype === "success") {
           resultText = result.result;
+          structuredOutput = result.structured_output;
         } else {
           throw new Error(
             `Agent error: ${result.subtype}${
@@ -488,7 +527,31 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
     console.log(`[Agent] ${agentName} completed in ${durationMs}ms`);
   } catch (err) {
     const durationMs = Date.now() - startTime;
-    console.error(`[Agent] ${agentName} failed after ${durationMs}ms:`, err instanceof Error ? err.message : err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+
+    // Log detailed error information for debugging
+    console.error(`[Agent] ${agentName} failed after ${durationMs}ms: ${errorMessage}`);
+
+    if (err instanceof Error) {
+      // Log stack trace
+      if (err.stack) {
+        console.error(`[Agent] Stack trace:`, err.stack);
+      }
+
+      // Log any additional properties on the error object
+      const errorProps = Object.keys(err).filter(k => k !== 'message' && k !== 'stack' && k !== 'name');
+      if (errorProps.length > 0) {
+        console.error(`[Agent] Error details:`, JSON.stringify(
+          errorProps.reduce((acc, k) => ({ ...acc, [k]: (err as unknown as Record<string, unknown>)[k] }), {}),
+          null,
+          2
+        ));
+      }
+    }
+
+    // Log context for debugging
+    console.error(`[Agent] Context: model=${effectiveModel}, cwd=${targetProjectPath || "default"}`);
+
     throw err;
   }
 
@@ -506,8 +569,13 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
     requiresUserInput,
     userQuestion,
     userQuestions,
+    structuredOutput,
   };
   } finally {
+    // Cleanup thinking interval
+    if (thinkingInterval) {
+      clearInterval(thinkingInterval);
+    }
     // Cleanup Playwright browser if it was initialized
     if (enablePlaywrightTools) {
       await closeBrowser();
@@ -563,7 +631,8 @@ export async function runPipelineAgent(
   targetProjectPath?: string,
   maxTurns?: number,
   toolCallbacks?: ToolEventCallbacks,
-  playwrightAgentOptions?: PlaywrightAgentOptions
+  playwrightAgentOptions?: PlaywrightAgentOptions,
+  modelOverride?: string
 ): Promise<PipelineAgentResult> {
   return createPipelineAgent({
     agentName,
@@ -572,6 +641,7 @@ export async function runPipelineAgent(
     targetProjectPath,
     maxTurns,
     toolCallbacks,
+    modelOverride,
     ...playwrightAgentOptions,
   });
 }

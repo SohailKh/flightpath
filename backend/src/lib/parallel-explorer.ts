@@ -5,6 +5,7 @@
  * and selects the appropriate model for the planning phase.
  */
 
+import { existsSync } from "node:fs";
 import {
   runPipelineAgent,
   type ToolEventCallbacks,
@@ -17,6 +18,42 @@ import {
   selectModelForPlanning,
 } from "./model-selector";
 import { appendEvent } from "./pipeline";
+
+// Error types for better retry logic
+export type ExplorerErrorType = "configuration" | "transient" | "unknown";
+
+/**
+ * Categorize an error to determine if it's worth retrying
+ */
+export function categorizeError(errorMessage: string): ExplorerErrorType {
+  const configErrors = [
+    "exited with code 1",
+    "not found",
+    "permission denied",
+    "ENOENT",
+    "EACCES",
+    "authentication",
+  ];
+
+  const transientErrors = [
+    "timeout",
+    "ETIMEDOUT",
+    "ECONNRESET",
+    "rate limit",
+    "503",
+    "502",
+  ];
+
+  const lowerMsg = errorMessage.toLowerCase();
+
+  if (configErrors.some(e => lowerMsg.includes(e.toLowerCase()))) {
+    return "configuration";
+  }
+  if (transientErrors.some(e => lowerMsg.includes(e.toLowerCase()))) {
+    return "transient";
+  }
+  return "unknown";
+}
 
 export type ExplorerType = "pattern" | "api" | "test";
 
@@ -45,6 +82,7 @@ export interface ExplorerResult {
   duration: number;
   model: string;
   error?: string;
+  errorType?: ExplorerErrorType;
 }
 
 export interface ParallelExplorationResult {
@@ -156,6 +194,15 @@ async function runSingleExplorer(
     return parseExplorerOutput(explorerType, result.reply, duration);
   } catch (error) {
     const duration = Date.now() - startTime;
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    const errorType = categorizeError(errorMsg);
+
+    // Log detailed error for debugging
+    console.error(`[Explore] ${explorerType} failed (${errorType}):`, errorMsg);
+    if (error instanceof Error && error.stack) {
+      console.error(`[Explore] Stack:`, error.stack);
+    }
+
     return {
       type: explorerType,
       patterns: [],
@@ -165,7 +212,8 @@ async function runSingleExplorer(
       notes: [],
       duration,
       model: "haiku",
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: errorMsg,
+      errorType,
     };
   }
 }
@@ -307,6 +355,18 @@ export async function runParallelExplorers(
   const explorerTypes: ExplorerType[] = ["pattern", "api", "test"];
   const startTime = Date.now();
 
+  // Validate target project path exists before running explorers
+  if (targetProjectPath) {
+    if (!existsSync(targetProjectPath)) {
+      const error = `Target project path does not exist: ${targetProjectPath}`;
+      console.error(`[Explore] Configuration error: ${error}`);
+      throw new Error(error);
+    }
+    console.log(`[Explore] Target project path validated: ${targetProjectPath}`);
+  } else {
+    console.log(`[Explore] No target project path specified, running in current directory`);
+  }
+
   console.log(`[Explore] Starting parallel exploration: ${explorerTypes.join(", ")}`);
 
   // Emit start event for each explorer
@@ -334,6 +394,8 @@ export async function runParallelExplorers(
       return result.value;
     } else {
       // Handle rejected promise
+      const errorMsg = result.reason?.message || "Unknown error";
+      const errorType = categorizeError(errorMsg);
       return {
         type,
         patterns: [],
@@ -343,7 +405,8 @@ export async function runParallelExplorers(
         notes: [],
         duration: 0,
         model: "haiku",
-        error: result.reason?.message || "Unknown error",
+        error: errorMsg,
+        errorType,
       };
     }
   });
@@ -380,8 +443,20 @@ export async function runParallelExplorers(
 
   // Check if all explorers failed
   if (successfulResults.length === 0) {
+    // Analyze error types to provide better guidance
+    const configErrors = explorerResults.filter((r) => r.errorType === "configuration");
+    const hasConfigError = configErrors.length > 0;
+
+    const errorDetails = explorerResults.map((r) =>
+      `${r.type}: ${r.error} (${r.errorType || "unknown"})`
+    ).join(", ");
+
+    const retryAdvice = hasConfigError
+      ? " [CONFIG ERROR - Retry will likely fail. Check Claude Code setup and authentication.]"
+      : " [May be transient - retry might help]";
+
     throw new Error(
-      `All parallel explorers failed: ${explorerResults.map((r) => `${r.type}: ${r.error}`).join(", ")}`
+      `All parallel explorers failed: ${errorDetails}${retryAdvice}`
     );
   }
 

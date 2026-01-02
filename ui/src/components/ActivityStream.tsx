@@ -140,7 +140,11 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
         ) : (
           <div className="font-mono text-xs">
             {filteredEvents.map((event, i) => (
-              <ActivityItem key={`${event.ts}-${i}`} event={event} />
+              <ActivityItem
+                key={`${event.ts}-${i}`}
+                event={event}
+                nextTs={filteredEvents[i + 1]?.ts}
+              />
             ))}
             <div ref={scrollRef} />
           </div>
@@ -168,7 +172,16 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
   );
 }
 
-function ActivityItem({ event }: { event: PipelineEvent }) {
+// Phase badge colors for inline display
+const phaseBadgeColors: Record<PipelinePhase, string> = {
+  qa: "bg-yellow-100 text-yellow-700",
+  exploring: "bg-cyan-100 text-cyan-700",
+  planning: "bg-purple-100 text-purple-700",
+  executing: "bg-green-100 text-green-700",
+  testing: "bg-blue-100 text-blue-700",
+};
+
+function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string }) {
   const data = event.data as unknown as ToolEventData;
   const time = new Date(event.ts).toLocaleTimeString("en-US", {
     hour12: false,
@@ -177,9 +190,39 @@ function ActivityItem({ event }: { event: PipelineEvent }) {
     second: "2-digit",
   });
 
+  // Calculate duration to next event
+  const durationToNext = nextTs
+    ? Math.round((new Date(nextTs).getTime() - new Date(event.ts).getTime()) / 1000)
+    : null;
+
+  const formatDuration = (seconds: number) => {
+    if (seconds >= 60) {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `+${mins}m ${secs}s`;
+    }
+    return `+${seconds}s`;
+  };
+
+  const formatToolDuration = (ms: number) => {
+    if (ms >= 60000) {
+      const mins = Math.floor(ms / 60000);
+      const secs = Math.round((ms % 60000) / 1000);
+      return `${mins}m ${secs}s`;
+    }
+    if (ms >= 1000) {
+      return `${(ms / 1000).toFixed(1)}s`;
+    }
+    return `${ms}ms`;
+  };
+
   const getIcon = () => {
     if (event.type === "tool_started") return ">";
-    if (event.type === "tool_completed") return "\u2713";
+    if (event.type === "tool_completed") {
+      // Show warning icon if outcome indicates issues
+      if (data.outcome === "warning") return "⚠";
+      return "\u2713";
+    }
     if (event.type === "tool_error") return "\u2717";
     if (event.type === "status_update") return "\u25CF";
     if (event.type.endsWith("_started")) return "\u25CB";
@@ -189,11 +232,23 @@ function ActivityItem({ event }: { event: PipelineEvent }) {
 
   const getColor = () => {
     if (event.type === "tool_error") return "text-red-600 bg-red-50";
-    if (event.type === "tool_completed") return "text-green-700";
+    if (event.type === "tool_completed") {
+      // Yellow/warning color if outcome has issues
+      if (data.outcome === "warning") return "text-amber-600";
+      return "text-green-700";
+    }
     if (event.type === "tool_started") return "text-blue-600";
     if (event.type === "status_update") return "text-slate-500";
     if (event.type.endsWith("_completed")) return "text-green-600";
     return "text-gray-600";
+  };
+
+  // Get full path for tooltip
+  const getFullPath = (): string | null => {
+    if (event.type !== "tool_started" || !data.toolName) return null;
+    const args = data.args as Record<string, unknown> | undefined;
+    const path = args?.file_path || args?.path;
+    return path ? String(path) : null;
   };
 
   const getMessage = () => {
@@ -206,7 +261,9 @@ function ActivityItem({ event }: { event: PipelineEvent }) {
       return data.toolName;
     }
     if (event.type === "tool_completed" && data.toolName) {
-      return `${data.toolName} done`;
+      // Include duration in completed message
+      const duration = data.durationMs ? ` (${formatToolDuration(data.durationMs)})` : "";
+      return `${data.toolName} done${duration}`;
     }
     if (event.type === "tool_error" && data.toolName) {
       return `${data.toolName} failed: ${data.error}`;
@@ -219,17 +276,8 @@ function ActivityItem({ event }: { event: PipelineEvent }) {
     return event.type.replace(/_/g, " ");
   };
 
-  const getDuration = () => {
-    if (event.type === "tool_completed" && data.durationMs !== undefined) {
-      if (data.durationMs >= 1000) {
-        return `${(data.durationMs / 1000).toFixed(1)}s`;
-      }
-      return `${data.durationMs}ms`;
-    }
-    return null;
-  };
-
-  const duration = getDuration();
+  const fullPath = getFullPath();
+  const phase = data.phase;
 
   return (
     <div
@@ -237,12 +285,20 @@ function ActivityItem({ event }: { event: PipelineEvent }) {
         "flex items-start gap-2 px-3 py-1 border-b border-gray-100 hover:bg-gray-50",
         getColor()
       )}
+      title={fullPath || undefined}
     >
       <span className="text-gray-400 w-16 flex-shrink-0">{time}</span>
+      {phase && (
+        <span className={cn("text-[10px] px-1 rounded flex-shrink-0", phaseBadgeColors[phase])}>
+          {phaseLabels[phase]}
+        </span>
+      )}
       <span className="w-4">{getIcon()}</span>
       <span className="flex-1 truncate">{getMessage()}</span>
-      {duration && (
-        <span className="text-gray-400 text-right flex-shrink-0 w-14">{duration}</span>
+      {durationToNext !== null && (
+        <span className="text-gray-400 text-right flex-shrink-0 w-16">
+          {formatDuration(durationToNext)}
+        </span>
       )}
     </div>
   );

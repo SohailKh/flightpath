@@ -66,6 +66,8 @@ export type PipelineEventType =
   | "tool_completed"
   | "tool_error"
   | "status_update"
+  // Todo updates from agent
+  | "todo_update"
   // Parallel exploration
   | "parallel_exploration_started"
   | "parallel_exploration_completed"
@@ -87,6 +89,26 @@ export interface Requirement {
   priority: number;
   status: "pending" | "in_progress" | "completed" | "failed";
   acceptanceCriteria: string[];
+}
+
+export interface EpicProgress {
+  total: number;
+  completed: number;
+  failed: number;
+  inProgress: number;
+}
+
+export interface Epic {
+  id: string;
+  title: string;
+  goal: string;
+  priority: number;
+  definitionOfDone: string;
+  keyScreens: string[];
+  smokeTestIds: string[];
+  requirementIds: string[];
+  status: "pending" | "in_progress" | "completed" | "partial";
+  progress: EpicProgress;
 }
 
 export interface ArtifactRef {
@@ -111,6 +133,7 @@ export interface Pipeline {
   phase: PhaseState;
   input: { initialPrompt: string };
   requirements: Requirement[];
+  epics: Epic[];
   currentRunId?: string;
   artifacts: ArtifactRef[];
   events: PipelineEvent[];
@@ -210,6 +233,7 @@ export function createPipeline(
     },
     input: { initialPrompt },
     requirements: [],
+    epics: [],
     artifacts: [],
     events: [],
     pauseRequested: false,
@@ -302,6 +326,57 @@ export function setRequirements(
 
   pipeline.requirements = requirements;
   pipeline.phase.totalRequirements = requirements.length;
+
+  persistState();
+}
+
+/**
+ * Set epics after QA phase completes
+ */
+export function setEpics(pipelineId: string, epics: Epic[]): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.epics = epics;
+  persistState();
+}
+
+/**
+ * Update epic progress based on current requirement statuses
+ */
+export function updateEpicProgress(pipelineId: string): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  for (const epic of pipeline.epics) {
+    const linkedReqs = pipeline.requirements.filter((r) =>
+      epic.requirementIds.includes(r.id)
+    );
+
+    const completed = linkedReqs.filter((r) => r.status === "completed").length;
+    const failed = linkedReqs.filter((r) => r.status === "failed").length;
+    const inProgress = linkedReqs.filter(
+      (r) => r.status === "in_progress"
+    ).length;
+
+    epic.progress = {
+      total: linkedReqs.length,
+      completed,
+      failed,
+      inProgress,
+    };
+
+    // Compute epic status
+    if (completed === epic.progress.total && epic.progress.total > 0) {
+      epic.status = "completed";
+    } else if (inProgress > 0) {
+      epic.status = "in_progress";
+    } else if (completed > 0 || failed > 0) {
+      epic.status = "partial";
+    } else {
+      epic.status = "pending";
+    }
+  }
 
   persistState();
 }

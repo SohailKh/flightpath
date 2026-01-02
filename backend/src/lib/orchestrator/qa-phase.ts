@@ -1,0 +1,264 @@
+/**
+ * QA Phase
+ *
+ * Interactive user interview to gather feature requirements.
+ */
+
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import {
+  getPipeline,
+  updatePhase,
+  updateStatus,
+  setRequirements,
+  setEpics,
+  addToConversation,
+  appendEvent,
+  setTargetProjectPath,
+} from "../pipeline";
+import {
+  runPipelineAgent,
+  runPipelineAgentWithMessage,
+  type PipelineAgentResult,
+} from "../agent";
+import { createToolCallbacks } from "./callbacks";
+import { LOG, logPhase } from "./utils";
+import {
+  FLIGHTPATH_ROOT,
+  parseRequirementsFromSpec,
+  generateTargetProjectPath,
+  initializeTargetProject,
+} from "./project-init";
+
+// Forward declaration - will be set by loop.ts to avoid circular imports
+let _runImplementationLoop: ((pipelineId: string) => Promise<void>) | null = null;
+
+/**
+ * Register the implementation loop runner (called from loop.ts)
+ */
+export function setImplementationLoopRunner(
+  runner: (pipelineId: string) => Promise<void>
+): void {
+  _runImplementationLoop = runner;
+}
+
+/**
+ * Run the QA phase - interview user about the feature
+ * This phase is interactive and requires user input
+ */
+export async function runQAPhase(
+  pipelineId: string,
+  initialPrompt: string,
+  targetProjectPath?: string
+): Promise<void> {
+  const pipeline = getPipeline(pipelineId);
+  if (!pipeline) return;
+
+  console.log(`${LOG.qa} Starting QA phase for pipeline ${pipelineId.slice(0, 8)}`);
+  appendEvent(pipelineId, "qa_started", { initialPrompt });
+  updatePhase(pipelineId, { current: "qa" });
+
+  // Start the QA agent with the initial prompt
+  const onStreamChunk = (chunk: string) => {
+    appendEvent(pipelineId, "agent_message", { content: chunk, streaming: true });
+  };
+
+  // Create tool callbacks for verbose logging
+  const toolCallbacks = createToolCallbacks(pipelineId, "qa");
+
+  try {
+    logPhase("qa", "Starting QA agent", initialPrompt.slice(0, 100));
+    appendEvent(pipelineId, "status_update", { action: "Starting feature discovery...", phase: "qa" });
+
+    const result = await runPipelineAgent("feature-qa", initialPrompt, onStreamChunk, targetProjectPath, 50, toolCallbacks);
+    logPhase("qa", "Agent responded", result.reply.slice(0, 100));
+
+    // Store conversation history
+    addToConversation(pipelineId, "user", initialPrompt);
+    addToConversation(pipelineId, "assistant", result.reply);
+
+    // Emit the full response
+    appendEvent(pipelineId, "agent_message", {
+      content: result.reply,
+      streaming: false,
+      requiresUserInput: result.requiresUserInput,
+      userQuestion: result.userQuestion,
+      userQuestions: result.userQuestions,
+    });
+
+    // If agent needs user input, pause and wait for message
+    if (result.requiresUserInput) {
+      // Pipeline will continue when user sends a message via handleUserMessage
+      return;
+    }
+
+    // Check if QA is complete (agent should have written feature-spec.v3.json)
+    if (isQAComplete(result)) {
+      await onQAComplete(pipelineId, result);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Pipeline ${pipelineId}] QA phase failed:`, errorMessage);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
+    appendEvent(pipelineId, "pipeline_failed", {
+      phase: "qa",
+      error: errorMessage,
+    });
+    updateStatus(pipelineId, "failed");
+  }
+}
+
+/**
+ * Handle user message during QA phase
+ */
+export async function handleUserMessage(
+  pipelineId: string,
+  message: string
+): Promise<void> {
+  const pipeline = getPipeline(pipelineId);
+  if (!pipeline) return;
+
+  // Only allow messages during QA phase
+  if (pipeline.phase.current !== "qa") {
+    appendEvent(pipelineId, "user_message", {
+      content: message,
+      error: "User messages only allowed during QA phase",
+    });
+    return;
+  }
+
+  appendEvent(pipelineId, "user_message", { content: message });
+  addToConversation(pipelineId, "user", message);
+
+  const onStreamChunk = (chunk: string) => {
+    appendEvent(pipelineId, "agent_message", { content: chunk, streaming: true });
+  };
+
+  const toolCallbacks = createToolCallbacks(pipelineId, "qa");
+
+  try {
+    logPhase("qa", "Continuing QA with user message", message.slice(0, 50));
+    console.log(`[QA Debug] Conversation history length: ${pipeline.conversationHistory.length}`);
+    // Count user messages to show progress (each user message = 1 exchange)
+    const exchangeCount = pipeline.conversationHistory.filter(m => m.role === "user").length;
+    // Provide immediate feedback that the agent is working
+    appendEvent(pipelineId, "status_update", {
+      action: `Processing response ${exchangeCount} (this may take a few minutes if generating requirements)...`,
+      phase: "qa"
+    });
+
+    console.log(`[QA Debug] Calling runPipelineAgentWithMessage...`);
+    const result = await runPipelineAgentWithMessage(
+      "feature-qa",
+      message,
+      pipeline.conversationHistory,
+      onStreamChunk,
+      pipeline.targetProjectPath,
+      50,
+      toolCallbacks
+    );
+    console.log(`[QA Debug] runPipelineAgentWithMessage returned, requiresUserInput=${result.requiresUserInput}`);
+
+    addToConversation(pipelineId, "assistant", result.reply);
+
+    appendEvent(pipelineId, "agent_message", {
+      content: result.reply,
+      streaming: false,
+      requiresUserInput: result.requiresUserInput,
+      userQuestion: result.userQuestion,
+      userQuestions: result.userQuestions,
+    });
+
+    // Check if QA is complete
+    if (isQAComplete(result)) {
+      await onQAComplete(pipelineId, result);
+    }
+  } catch (error) {
+    appendEvent(pipelineId, "pipeline_failed", {
+      phase: "qa",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    updateStatus(pipelineId, "failed");
+  }
+}
+
+/**
+ * Check if QA phase is complete
+ * Uses file-based detection for reliability instead of string matching.
+ */
+function isQAComplete(result: PipelineAgentResult): boolean {
+  // Primary: Check if agent wrote to the spec file via tool calls
+  const wroteSpecFile = result.toolCalls?.some(
+    (call) =>
+      call.name === "Write" &&
+      String((call.args as Record<string, unknown>)?.file_path || "").includes("feature-spec.v3.json")
+  );
+
+  if (wroteSpecFile) {
+    console.log(`${LOG.qa} Checking completion... result=true (spec file written by agent)`);
+    return true;
+  }
+
+  // Fallback: Check actual file existence
+  const specPath = join(FLIGHTPATH_ROOT, ".claude", "pipeline", "feature-spec.v3.json");
+  const fileExists = existsSync(specPath);
+
+  if (fileExists) {
+    console.log(`${LOG.qa} Checking completion... result=true (spec file exists)`);
+    return true;
+  }
+
+  console.log(`${LOG.qa} Checking completion... result=false (no spec file)`);
+  return false;
+}
+
+/**
+ * Handle QA completion - parse requirements and start the loop
+ */
+async function onQAComplete(
+  pipelineId: string,
+  _result: PipelineAgentResult
+): Promise<void> {
+  appendEvent(pipelineId, "qa_completed", {});
+  appendEvent(pipelineId, "requirements_ready", {
+    message: "Requirements have been generated",
+  });
+
+  // Parse requirements, epics, and project name from the feature spec
+  const { requirements, epics, projectName } = await parseRequirementsFromSpec();
+
+  console.log(`${LOG.qa} Complete. Found ${requirements.length} requirements, ${epics.length} epics, project: ${projectName}`);
+
+  if (requirements.length === 0) {
+    appendEvent(pipelineId, "pipeline_failed", {
+      error: "No requirements found after QA phase",
+    });
+    updateStatus(pipelineId, "failed");
+    return;
+  }
+
+  // Generate and set the target project path
+  const targetPath = generateTargetProjectPath(projectName);
+  setTargetProjectPath(pipelineId, targetPath);
+
+  // Create target directory and copy feature spec
+  await initializeTargetProject(targetPath);
+
+  appendEvent(pipelineId, "target_project_set", {
+    projectName,
+    targetPath,
+  });
+
+  setRequirements(pipelineId, requirements);
+  setEpics(pipelineId, epics);
+  updatePhase(pipelineId, { totalRequirements: requirements.length });
+
+  // Start the implementation loop
+  if (_runImplementationLoop) {
+    await _runImplementationLoop(pipelineId);
+  } else {
+    throw new Error("Implementation loop runner not registered");
+  }
+}
