@@ -163,6 +163,31 @@ const subscribers = new Map<string, Set<EventSubscriber>>();
 // Global lock for single-pipeline mode (V1)
 let activePipelineId: string | null = null;
 
+// In-memory only (not persisted) - tracks if loop is actually running
+// After server restart this is empty, correctly indicating no pipelines are running
+const runningPipelines = new Set<string>();
+
+/**
+ * Mark a pipeline as actively running (loop is executing)
+ */
+export function markRunning(pipelineId: string): void {
+  runningPipelines.add(pipelineId);
+}
+
+/**
+ * Mark a pipeline as stopped (loop finished or crashed)
+ */
+export function markStopped(pipelineId: string): void {
+  runningPipelines.delete(pipelineId);
+}
+
+/**
+ * Check if a pipeline's loop is actively running
+ */
+export function isRunning(pipelineId: string): boolean {
+  return runningPipelines.has(pipelineId);
+}
+
 /**
  * Save current state to disk
  */

@@ -4,7 +4,7 @@
  * Interactive user interview to gather feature requirements.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
   getPipeline,
@@ -15,13 +15,15 @@ import {
   addToConversation,
   appendEvent,
   setTargetProjectPath,
+  markRunning,
+  markStopped,
 } from "../pipeline";
 import {
   runPipelineAgent,
   runPipelineAgentWithMessage,
   type PipelineAgentResult,
 } from "../agent";
-import { createToolCallbacks } from "./callbacks";
+import { createToolCallbacks, emitTodoEvents } from "./callbacks";
 import { LOG, logPhase } from "./utils";
 import {
   FLIGHTPATH_ROOT,
@@ -29,6 +31,18 @@ import {
   generateTargetProjectPath,
   initializeTargetProject,
 } from "./project-init";
+
+/**
+ * Clear any existing feature spec file to prevent contamination
+ * from previous pipelines.
+ */
+function clearFeatureSpec(): void {
+  const specPath = join(FLIGHTPATH_ROOT, ".claude", "pipeline", "feature-spec.v3.json");
+  if (existsSync(specPath)) {
+    unlinkSync(specPath);
+    console.log(`[QA] Cleared stale feature-spec.v3.json`);
+  }
+}
 
 // Forward declaration - will be set by loop.ts to avoid circular imports
 let _runImplementationLoop: ((pipelineId: string) => Promise<void>) | null = null;
@@ -54,7 +68,10 @@ export async function runQAPhase(
   const pipeline = getPipeline(pipelineId);
   if (!pipeline) return;
 
+  markRunning(pipelineId);
+
   console.log(`${LOG.qa} Starting QA phase for pipeline ${pipelineId.slice(0, 8)}`);
+  clearFeatureSpec();
   appendEvent(pipelineId, "qa_started", { initialPrompt });
   updatePhase(pipelineId, { current: "qa" });
 
@@ -71,6 +88,10 @@ export async function runQAPhase(
     appendEvent(pipelineId, "status_update", { action: "Starting feature discovery...", phase: "qa" });
 
     const result = await runPipelineAgent("feature-qa", initialPrompt, onStreamChunk, targetProjectPath, 50, toolCallbacks);
+
+    // Emit todo events if agent returned todos in structured output
+    emitTodoEvents(pipelineId, "qa", result.structuredOutput);
+
     logPhase("qa", "Agent responded", result.reply.slice(0, 100));
 
     // Store conversation history
@@ -89,14 +110,21 @@ export async function runQAPhase(
     // If agent needs user input, pause and wait for message
     if (result.requiresUserInput) {
       // Pipeline will continue when user sends a message via handleUserMessage
+      // Mark as stopped since we're waiting for user input
+      markStopped(pipelineId);
       return;
     }
 
     // Check if QA is complete (agent should have written feature-spec.v3.json)
     if (isQAComplete(result)) {
+      // Note: onQAComplete calls _runImplementationLoop which has its own markRunning
+      markStopped(pipelineId);
       await onQAComplete(pipelineId, result);
+    } else {
+      markStopped(pipelineId);
     }
   } catch (error) {
+    markStopped(pipelineId);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`[Pipeline ${pipelineId}] QA phase failed:`, errorMessage);
     if (error instanceof Error && error.stack) {
@@ -128,6 +156,8 @@ export async function handleUserMessage(
     });
     return;
   }
+
+  markRunning(pipelineId);
 
   appendEvent(pipelineId, "user_message", { content: message });
   addToConversation(pipelineId, "user", message);
@@ -161,6 +191,9 @@ export async function handleUserMessage(
     );
     console.log(`[QA Debug] runPipelineAgentWithMessage returned, requiresUserInput=${result.requiresUserInput}`);
 
+    // Emit todo events if agent returned todos in structured output
+    emitTodoEvents(pipelineId, "qa", result.structuredOutput);
+
     addToConversation(pipelineId, "assistant", result.reply);
 
     appendEvent(pipelineId, "agent_message", {
@@ -173,9 +206,15 @@ export async function handleUserMessage(
 
     // Check if QA is complete
     if (isQAComplete(result)) {
+      // Note: onQAComplete calls _runImplementationLoop which has its own markRunning
+      markStopped(pipelineId);
       await onQAComplete(pipelineId, result);
+    } else {
+      // Waiting for more user input
+      markStopped(pipelineId);
     }
   } catch (error) {
+    markStopped(pipelineId);
     appendEvent(pipelineId, "pipeline_failed", {
       phase: "qa",
       error: error instanceof Error ? error.message : "Unknown error",

@@ -1,126 +1,131 @@
 {
-  "featurePrefix": "cmw",
-  "generatedAt": "2025-01-01T00:00:00Z",
+  "featurePrefix": "weather",
+  "generatedAt": "2026-01-01T00:00:00.000Z",
   "smokeTests": [
     {
       "id": "smoke-001",
-      "title": "Homepage Loads Successfully",
+      "title": "Launch → Enter zipcode → See weather",
       "platform": "mobile",
-      "epicId": "epic-homepage",
+      "epicId": "epic-core",
       "global": true,
-      "enabledWhen": { "requirementCompleted": "cmw-013" },
-      "preconditions": ["Server running", "Database connected"],
+      "enabledWhen": { "requirementCompleted": "weather-019" },
+      "preconditions": [
+        "App is running",
+        "Backend is running",
+        "Valid API key configured"
+      ],
       "steps": [
         "launchApp",
-        "assertVisible:testId=nav-logo",
-        "assertVisible:testId=hero-section",
-        "screenshot:name=homepage-loaded"
+        "assertVisible:testId=zipcode-input",
+        "type:testId=zipcode-input value=90210",
+        "tap:testId=search-btn",
+        "wait:ms=2000",
+        "assertVisible:testId=weather-card",
+        "assertVisible:testId=current-temp",
+        "assertVisible:testId=location-name",
+        "screenshot:name=weather-result"
       ]
     },
     {
       "id": "smoke-002",
-      "title": "Navigation Works",
+      "title": "Invalid zipcode shows error",
       "platform": "mobile",
-      "epicId": "epic-homepage",
-      "global": true,
-      "enabledWhen": { "requirementCompleted": "cmw-037" },
-      "preconditions": ["Homepage loaded"],
+      "epicId": "epic-core",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "weather-020" },
+      "preconditions": [
+        "App is running"
+      ],
       "steps": [
-        "tap:testId=nav-services",
-        "assertVisible:testId=services-page",
-        "tap:testId=nav-portfolio",
-        "assertVisible:testId=portfolio-page",
-        "screenshot:name=navigation-working"
+        "launchApp",
+        "type:testId=zipcode-input value=123",
+        "tap:testId=search-btn",
+        "assertVisible:testId=zipcode-error",
+        "screenshot:name=validation-error"
       ]
     },
     {
       "id": "smoke-003",
-      "title": "Portfolio Filter Works",
+      "title": "View 5-day forecast",
       "platform": "mobile",
-      "epicId": "epic-portfolio",
-      "global": true,
-      "enabledWhen": { "requirementCompleted": "cmw-038" },
-      "preconditions": ["Portfolio page loaded", "Projects seeded"],
+      "epicId": "epic-forecast",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "weather-031" },
+      "preconditions": [
+        "App is running",
+        "Backend is running"
+      ],
       "steps": [
-        "tap:testId=nav-portfolio",
-        "assertVisible:testId=filter-all",
-        "tap:testId=filter-kitchen",
-        "assertVisible:testId=project-card-1",
-        "screenshot:name=portfolio-filtered"
+        "launchApp",
+        "type:testId=zipcode-input value=10001",
+        "tap:testId=search-btn",
+        "wait:ms=2000",
+        "assertVisible:testId=forecast-section",
+        "assertVisible:testId=forecast-day-0",
+        "assertVisible:testId=forecast-day-4",
+        "screenshot:name=forecast-view"
       ]
     },
     {
       "id": "smoke-004",
-      "title": "Project Detail View",
+      "title": "View weather details grid",
       "platform": "mobile",
-      "epicId": "epic-portfolio",
-      "global": true,
-      "enabledWhen": { "requirementCompleted": "cmw-038" },
-      "preconditions": ["Portfolio loaded"],
+      "epicId": "epic-details",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "weather-043" },
+      "preconditions": [
+        "App is running",
+        "Backend is running"
+      ],
       "steps": [
-        "tap:testId=project-card-1",
-        "assertVisible:testId=project-images",
-        "assertVisible:testId=back-to-portfolio",
-        "tap:testId=back-to-portfolio",
-        "assertVisible:testId=portfolio-page",
-        "screenshot:name=project-detail"
+        "launchApp",
+        "type:testId=zipcode-input value=60601",
+        "tap:testId=search-btn",
+        "wait:ms=2000",
+        "assertVisible:testId=details-grid",
+        "assertVisible:testId=humidity-card",
+        "assertVisible:testId=wind-card",
+        "screenshot:name=details-grid"
       ]
     },
     {
       "id": "smoke-005",
-      "title": "Contact Form Submission",
+      "title": "Loading and error states work",
       "platform": "mobile",
-      "epicId": "epic-lead-gen",
-      "global": true,
-      "enabledWhen": { "requirementCompleted": "cmw-039" },
-      "preconditions": ["Contact page accessible"],
+      "epicId": "epic-ux",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "weather-051" },
+      "preconditions": [
+        "App is running"
+      ],
       "steps": [
-        "tap:testId=nav-contact",
-        "type:testId=contact-name value=Test User",
-        "type:testId=contact-email value=test@example.com",
-        "type:testId=contact-phone value=555-1234",
-        "type:testId=contact-message value=Test message",
-        "tap:testId=contact-submit",
-        "wait:ms=2000",
-        "assertVisible:testId=contact-success",
-        "screenshot:name=contact-submitted"
+        "launchApp",
+        "assertVisible:testId=empty-state",
+        "screenshot:name=empty-state",
+        "type:testId=zipcode-input value=99999",
+        "tap:testId=search-btn",
+        "assertVisible:testId=loading-skeleton",
+        "wait:ms=3000",
+        "assertVisible:testId=error-display",
+        "screenshot:name=error-state"
       ]
     },
     {
       "id": "smoke-006",
-      "title": "Booking Calendar Flow",
+      "title": "Dark mode toggle works",
       "platform": "mobile",
-      "epicId": "epic-booking",
-      "global": true,
-      "enabledWhen": { "requirementCompleted": "cmw-040" },
-      "preconditions": ["Booking page accessible", "Available slots exist"],
+      "epicId": "epic-polish",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "weather-078" },
+      "preconditions": [
+        "App is running"
+      ],
       "steps": [
-        "tap:testId=nav-book",
-        "assertVisible:testId=booking-calendar",
-        "tap:testId=date-2025-02-15",
-        "tap:testId=time-slot-10-00",
-        "type:testId=booking-name value=Test Client",
-        "type:testId=booking-email value=client@test.com",
-        "type:testId=booking-phone value=555-5678",
-        "tap:testId=booking-submit",
-        "wait:ms=2000",
-        "assertVisible:testId=booking-confirmation",
-        "screenshot:name=booking-confirmed"
-      ]
-    },
-    {
-      "id": "smoke-007",
-      "title": "Testimonials Display",
-      "platform": "mobile",
-      "epicId": "epic-credibility",
-      "global": true,
-      "enabledWhen": { "requirementCompleted": "cmw-027" },
-      "preconditions": ["Testimonials seeded"],
-      "steps": [
-        "tap:testId=nav-testimonials",
-        "assertVisible:testId=testimonial-1",
-        "assertVisible:testId=testimonial-2",
-        "screenshot:name=testimonials-page"
+        "launchApp",
+        "screenshot:name=light-mode",
+        "tap:testId=theme-toggle",
+        "wait:ms=500",
+        "screenshot:name=dark-mode"
       ]
     }
   ]

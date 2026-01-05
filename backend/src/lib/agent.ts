@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { loadProjectConfig, generateProjectContext } from "./project-config";
+import { VERBOSE, logVerbose } from "./orchestrator/utils";
 
 // Flightpath root directory - resolved at module load time so it doesn't change
 // when agents run with a different cwd (targetProjectPath)
@@ -287,9 +288,9 @@ function truncateStr(str: string, len: number): string {
 function mapModelName(shortName?: string): string | undefined {
   if (!shortName) return undefined;
   const modelMap: Record<string, string> = {
-    haiku: "claude-haiku-3-5-20241022",
-    sonnet: "claude-sonnet-4-5-20250929",
-    opus: "claude-opus-4-20250514",
+    haiku: "haiku",
+    sonnet: "sonnet",
+    opus: "opus",
   };
   return modelMap[shortName.toLowerCase()] || shortName;
 }
@@ -330,9 +331,14 @@ export async function createPipelineAgent(
 
   // Inject context for new projects (no target path = building from scratch)
   if (!targetProjectPath) {
+    // Get the actual working directory so agent knows where to write files
+    const cwd = process.cwd();
     systemPrompt = `## Context
 This is a NEW PROJECT - there is no existing codebase to analyze.
 Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to interviewing the user about what they want to build.
+
+**Working Directory:** \`${cwd}\`
+When writing files (like feature-spec.v3.json), use this as the base path.
 
 ` + systemPrompt;
   }
@@ -368,6 +374,8 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
 
   // Wrap execution in try/finally to ensure browser cleanup
   let thinkingInterval: ReturnType<typeof setInterval> | null = null;
+  // Collect stderr output for diagnostics on failure
+  const stderrBuffer: string[] = [];
   try {
   const q = query({
     prompt: fullPrompt,
@@ -379,6 +387,10 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
       allowDangerouslySkipPermissions: true,
       // Set working directory for agent if target project path is provided
       ...(targetProjectPath && { cwd: targetProjectPath }),
+      // Capture stderr for debugging agent failures
+      stderr: (data: string) => {
+        stderrBuffer.push(data);
+      },
       // Hook callbacks for tool events
       hooks: (toolCallbacks || enablePlaywrightTools) ? {
         PreToolUse: [{
@@ -493,6 +505,7 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
   }, 15000) : null; // Check every 15 seconds
 
   const processAgent = async () => {
+    let turnCount = 0;
     for await (const msg of q) {
       lastActivityTime = Date.now(); // Update activity time on any message
 
@@ -504,14 +517,44 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
         }
       }
 
+      // Track and log turn progress
+      if (msg.type === "assistant") {
+        turnCount++;
+        console.log(`[Agent] ${agentName} turn ${turnCount}/${maxTurns}`);
+
+        // Verbose: log agent message content
+        if (VERBOSE && "content" in msg) {
+          const content = msg.content as string;
+          logVerbose("Agent", `${agentName} turn ${turnCount}`, {
+            contentLength: `${content?.length || 0} chars`,
+            preview: content?.slice(0, 300),
+          });
+        }
+      }
+
       if (msg.type === "result") {
         const result = msg as SDKResultMessage;
         if (result.subtype === "success") {
           resultText = result.result;
           structuredOutput = result.structured_output;
+          // Log token usage if available
+          if ("usage" in result && result.usage) {
+            const usage = result.usage as { input_tokens?: number; output_tokens?: number };
+            console.log(`[Agent] ${agentName} tokens: input=${usage.input_tokens ?? "?"}, output=${usage.output_tokens ?? "?"}`);
+          }
+
+          // Verbose: log agent completion details
+          if (VERBOSE) {
+            logVerbose("Agent", `${agentName} completed`, {
+              replyLength: `${resultText?.length || 0} chars`,
+              hasStructuredOutput: !!structuredOutput,
+              historyMessages: conversationHistory.length,
+            });
+          }
         } else {
+          const maxTurnsInfo = result.subtype === "error_max_turns" ? ` (limit: ${maxTurns})` : "";
           throw new Error(
-            `Agent error: ${result.subtype}${
+            `Agent error: ${result.subtype}${maxTurnsInfo}${
               "errors" in result ? ` - ${result.errors.join(", ")}` : ""
             }`
           );
@@ -551,6 +594,12 @@ Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to i
 
     // Log context for debugging
     console.error(`[Agent] Context: model=${effectiveModel}, cwd=${targetProjectPath || "default"}`);
+
+    // Log stderr output if available
+    const stderrOutput = stderrBuffer.join('');
+    if (stderrOutput) {
+      console.error(`[Agent] stderr output:\n${stderrOutput}`);
+    }
 
     throw err;
   }

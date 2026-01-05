@@ -208,6 +208,8 @@ export interface Pipeline {
   pauseRequested: boolean;
   abortRequested: boolean;
   conversationHistory: ConversationMessage[];
+  /** Whether the pipeline loop is actively running (not persisted - false after server restart) */
+  isRunning?: boolean;
 }
 
 export interface PipelineSummary {

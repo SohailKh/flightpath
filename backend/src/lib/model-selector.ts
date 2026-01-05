@@ -48,9 +48,9 @@ export interface Requirement {
 
 // Model identifiers
 const MODELS = {
-  haiku: "claude-haiku-3-5-20241022",
-  sonnet: "claude-sonnet-4-5-20250929",
-  opus: "claude-opus-4-20250514",
+  haiku: "haiku",
+  sonnet: "sonnet",
+  opus: "opus",
 } as const;
 
 /**

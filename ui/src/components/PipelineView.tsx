@@ -7,6 +7,7 @@ import {
   pausePipeline,
   abortPipeline,
   resumePipeline,
+  goPipeline,
 } from "../lib/api";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -88,6 +89,17 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
     }
   }, [pipelineId]);
 
+  const handleGo = useCallback(async () => {
+    try {
+      await goPipeline(pipelineId);
+      // Refresh pipeline state after go
+      const updated = await getPipeline(pipelineId);
+      setPipeline(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to go");
+    }
+  }, [pipelineId]);
+
   if (!pipeline) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -119,7 +131,13 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {!isTerminal && pipeline.status !== "paused" && (
+          {/* Go button - for orphaned pipelines (e.g., after server restart) */}
+          {!isTerminal && !pipeline.isRunning && pipeline.status !== "paused" && pipeline.phase.current !== "qa" && (
+            <Button variant="default" size="sm" onClick={handleGo}>
+              Go
+            </Button>
+          )}
+          {!isTerminal && pipeline.status !== "paused" && pipeline.isRunning && (
             <Button variant="outline" size="sm" onClick={handlePause}>
               Pause
             </Button>

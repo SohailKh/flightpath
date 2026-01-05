@@ -17,7 +17,7 @@ import {
 } from "../parallel-explorer";
 import { type ExplorationDepth } from "../model-selector";
 import { createToolCallbacks } from "./callbacks";
-import { logPhase } from "./utils";
+import { logPhase, VERBOSE, logVerbose } from "./utils";
 
 /**
  * Run the exploration phase for a requirement
@@ -63,6 +63,27 @@ export async function runExplorePhase(
   );
 
   logPhase("explore", "Parallel exploration completed", `${requirement.id} - model: ${result.selectedModel}`);
+
+  // Verbose: log exploration metrics
+  if (VERBOSE) {
+    const successCount = result.explorers.filter(e => !e.error).length;
+    const failedCount = result.explorers.filter(e => e.error).length;
+
+    logVerbose("Explore", "Exploration metrics", {
+      complexityScore: result.complexityScore,
+      totalDuration: `${result.totalDuration}ms`,
+      successfulExplorers: successCount,
+      failedExplorers: failedCount,
+    });
+
+    logVerbose("Explore", "Discovery summary", {
+      patterns: result.merged.patterns.length,
+      templates: result.merged.relatedFiles.templates.length,
+      types: result.merged.relatedFiles.types.length,
+      tests: result.merged.relatedFiles.tests.length,
+      apiEndpoints: result.merged.apiEndpoints.length,
+    });
+  }
 
   // Emit summary of exploration results
   appendEvent(pipelineId, "agent_message", {

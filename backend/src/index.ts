@@ -24,9 +24,11 @@ import {
   resume as resumePipelineState,
   subscribe as subscribePipeline,
   isTerminal as isPipelineTerminal,
+  isRunning as isPipelineRunning,
   clearPipelines,
   type Pipeline,
 } from "./lib/pipeline";
+import { runImplementationLoop } from "./lib/orchestrator";
 import {
   runQAPhase,
   handleUserMessage,
@@ -332,7 +334,11 @@ app.get("/api/pipelines/:id", (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  return c.json(pipeline);
+  // Include isRunning in response so UI can determine button visibility
+  return c.json({
+    ...pipeline,
+    isRunning: isPipelineRunning(pipelineId),
+  });
 });
 
 // SSE endpoint for pipeline events
@@ -512,6 +518,40 @@ app.post("/api/pipelines/:id/resume", async (c) => {
   setTimeout(() => {
     resumePipeline(pipelineId).catch((err) => {
       console.error("[API] Resume error:", err);
+    });
+  }, 0);
+
+  return c.json({ ok: true });
+});
+
+// Go - resume an orphaned pipeline (e.g., after server restart)
+app.post("/api/pipelines/:id/go", async (c) => {
+  const pipelineId = c.req.param("id");
+  const pipeline = getPipeline(pipelineId);
+
+  if (!pipeline) {
+    return c.json({ error: "Pipeline not found" }, 404);
+  }
+
+  if (isPipelineTerminal(pipelineId)) {
+    return c.json({ error: "Pipeline is in terminal state" }, 400);
+  }
+
+  if (isPipelineRunning(pipelineId)) {
+    return c.json({ error: "Pipeline is already running" }, 400);
+  }
+
+  // QA phase requires user interaction, can't auto-resume
+  if (pipeline.phase.current === "qa") {
+    return c.json({ error: "QA phase requires user message to continue" }, 400);
+  }
+
+  console.log(`[API] POST /api/pipelines/${pipelineId}/go - resuming from ${pipeline.phase.current}`);
+
+  // Resume in background
+  setTimeout(() => {
+    runImplementationLoop(pipelineId).catch((err) => {
+      console.error("[API] Go error:", err);
     });
   }, 0);
 

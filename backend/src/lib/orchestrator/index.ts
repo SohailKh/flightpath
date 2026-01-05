@@ -7,7 +7,7 @@
 
 // Public API
 export { runQAPhase, handleUserMessage } from "./qa-phase";
-export { resumePipeline } from "./loop";
+export { resumePipeline, runImplementationLoop } from "./loop";
 
 // Re-export types that may be needed externally
 export { type TestVerdict } from "./test-phase";

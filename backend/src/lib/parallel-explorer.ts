@@ -20,39 +20,97 @@ import {
 import { appendEvent } from "./pipeline";
 
 // Error types for better retry logic
-export type ExplorerErrorType = "configuration" | "transient" | "unknown";
+export type ExplorerErrorType = "configuration" | "authentication" | "model" | "transient" | "unknown";
+
+export interface CategorizedError {
+  type: ExplorerErrorType;
+  retryable: boolean;
+  suggestedAction: string;
+}
 
 /**
- * Categorize an error to determine if it's worth retrying
+ * Categorize an error to determine if it's worth retrying and suggest remediation
  */
 export function categorizeError(errorMessage: string): ExplorerErrorType {
-  const configErrors = [
-    "exited with code 1",
-    "not found",
-    "permission denied",
-    "ENOENT",
-    "EACCES",
-    "authentication",
-  ];
+  const result = categorizeErrorWithDetails(errorMessage);
+  return result.type;
+}
 
-  const transientErrors = [
+/**
+ * Categorize an error with full details including retry guidance and suggested actions
+ */
+export function categorizeErrorWithDetails(errorMessage: string): CategorizedError {
+  const lowerMsg = errorMessage.toLowerCase();
+
+  // Authentication errors - need user action
+  if (
+    lowerMsg.includes("not logged in") ||
+    lowerMsg.includes("api key") ||
+    lowerMsg.includes("unauthorized") ||
+    lowerMsg.includes("401")
+  ) {
+    return {
+      type: "authentication",
+      retryable: false,
+      suggestedAction: "Run 'claude login' to authenticate",
+    };
+  }
+
+  // Model errors - configuration issue
+  if (
+    lowerMsg.includes("model not found") ||
+    lowerMsg.includes("invalid model") ||
+    (lowerMsg.includes("model") && lowerMsg.includes("not available"))
+  ) {
+    return {
+      type: "model",
+      retryable: false,
+      suggestedAction: "Check model ID is valid. See https://docs.anthropic.com/en/docs/about-claude/models",
+    };
+  }
+
+  // File/path errors
+  const pathErrors = ["not found", "permission denied", "ENOENT", "EACCES"];
+  if (pathErrors.some(e => lowerMsg.includes(e.toLowerCase()))) {
+    return {
+      type: "configuration",
+      retryable: false,
+      suggestedAction: "Check file paths and permissions",
+    };
+  }
+
+  // Generic exit code 1 - needs stderr for more info
+  if (lowerMsg.includes("exited with code 1")) {
+    return {
+      type: "configuration",
+      retryable: false,
+      suggestedAction: "Check agent stderr output for details. May be auth, model, or config issue.",
+    };
+  }
+
+  // Transient errors - worth retrying
+  const transientPatterns = [
     "timeout",
     "ETIMEDOUT",
     "ECONNRESET",
     "rate limit",
     "503",
     "502",
+    "overloaded",
   ];
-
-  const lowerMsg = errorMessage.toLowerCase();
-
-  if (configErrors.some(e => lowerMsg.includes(e.toLowerCase()))) {
-    return "configuration";
+  if (transientPatterns.some(e => lowerMsg.includes(e.toLowerCase()))) {
+    return {
+      type: "transient",
+      retryable: true,
+      suggestedAction: "Retry after backoff",
+    };
   }
-  if (transientErrors.some(e => lowerMsg.includes(e.toLowerCase()))) {
-    return "transient";
-  }
-  return "unknown";
+
+  return {
+    type: "unknown",
+    retryable: true, // Optimistic retry for unknown errors
+    suggestedAction: "Check logs for more details",
+  };
 }
 
 export type ExplorerType = "pattern" | "api" | "test";
@@ -184,7 +242,7 @@ async function runSingleExplorer(
         prompt,
         undefined, // No streaming for parallel explorers
         targetProjectPath,
-        5, // Max turns - keep explorers focused
+        20, // Max turns - explorers need room to properly explore codebases
         toolCallbacks
       ),
       timeoutPromise,
@@ -197,11 +255,10 @@ async function runSingleExplorer(
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
     const errorType = categorizeError(errorMsg);
 
-    // Log detailed error for debugging
+    // Log detailed error for debugging (stack trace is logged at agent.ts level)
     console.error(`[Explore] ${explorerType} failed (${errorType}):`, errorMsg);
-    if (error instanceof Error && error.stack) {
-      console.error(`[Explore] Stack:`, error.stack);
-    }
+    console.error(`[Explore] ${explorerType} config: maxTurns=20, timeout=${timeoutMs}ms, model=haiku`);
+    console.error(`[Explore] Requirement: ${requirement.id} - ${requirement.title}`);
 
     return {
       type: explorerType,

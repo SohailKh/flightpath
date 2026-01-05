@@ -16,7 +16,7 @@ import { runPipelineAgent, type PipelineAgentResult } from "../agent";
 import { saveScreenshot, saveTestResult } from "../artifacts";
 import { startDevServers, stopDevServers, type ServerHandle } from "../dev-server";
 import { captureWebScreenshot, closeBrowser } from "../screenshot";
-import { createToolCallbacks, createServerLogCallbacks } from "./callbacks";
+import { createToolCallbacks, createServerLogCallbacks, emitTodoEvents } from "./callbacks";
 import { LOG, logPhase } from "./utils";
 
 /**
@@ -153,6 +153,9 @@ Run tests and capture screenshots as evidence.`;
       toolCallbacks,
       { enablePlaywrightTools: true }
     );
+
+    // Emit todo events if agent returned todos in structured output
+    emitTodoEvents(pipelineId, "testing", result.structuredOutput);
 
     logPhase("test", "Testing completed", `${requirement.id}`);
 

@@ -13,6 +13,8 @@ import {
   appendEvent,
   isPauseRequested,
   isAbortRequested,
+  markRunning,
+  markStopped,
 } from "../pipeline";
 import { categorizeError } from "../parallel-explorer";
 import { runExplorePhase } from "./explore-phase";
@@ -61,6 +63,20 @@ export async function runImplementationLoop(pipelineId: string): Promise<void> {
   const pipeline = getPipeline(pipelineId);
   if (!pipeline) return;
 
+  markRunning(pipelineId);
+  try {
+    await runImplementationLoopInner(pipelineId, pipeline);
+  } finally {
+    markStopped(pipelineId);
+  }
+}
+
+/**
+ * Inner implementation loop logic
+ */
+async function runImplementationLoopInner(pipelineId: string, pipeline: ReturnType<typeof getPipeline>): Promise<void> {
+  if (!pipeline) return;
+
   console.log(`${LOG.pipeline} Starting implementation loop: ${pipeline.requirements.length} requirements`);
 
   for (let i = pipeline.phase.requirementIndex; i < pipeline.requirements.length; i++) {
@@ -99,39 +115,52 @@ export async function runImplementationLoop(pipelineId: string): Promise<void> {
         return;
       }
 
+      // Track phase timings
+      let exploreMs = 0, planMs = 0, executeMs = 0, testMs = 0;
+
       try {
         // EXPLORE phase
+        const exploreStart = Date.now();
         const explorationResult = await runExplorePhase(pipelineId, requirement);
+        exploreMs = Date.now() - exploreStart;
         if (await checkControlFlags(pipelineId)) return;
 
         // PLAN phase - pass exploration context and model override
+        const planStart = Date.now();
         await runPlanPhase(pipelineId, requirement, {
           explorationContext: explorationResult.merged,
           modelOverride: explorationResult.selectedModel,
         });
+        planMs = Date.now() - planStart;
         if (await checkControlFlags(pipelineId)) return;
 
         // EXECUTE phase - pass exploration context and model override
+        const executeStart = Date.now();
         await runExecutePhase(pipelineId, requirement, {
           explorationContext: explorationResult.merged,
           modelOverride: explorationResult.selectedModel,
         });
+        executeMs = Date.now() - executeStart;
         if (await checkControlFlags(pipelineId)) return;
 
         // TEST phase
+        const testStart = Date.now();
         const testPassed = await runTestPhase(pipelineId, requirement);
+        testMs = Date.now() - testStart;
 
         if (testPassed) {
           success = true;
           console.log(`${LOG.pipeline} Requirement ${requirement.id} completed`);
+          console.log(`${LOG.pipeline} ${requirement.id} timing: explore=${exploreMs}ms, plan=${planMs}ms, execute=${executeMs}ms, test=${testMs}ms`);
           updateRequirement(pipelineId, requirement.id, "completed");
           updateEpicProgress(pipelineId);
           appendEvent(pipelineId, "requirement_completed", {
             requirementId: requirement.id,
+            timing: { exploreMs, planMs, executeMs, testMs },
           });
         } else {
           retryCount++;
-          console.log(`${LOG.pipeline} Retry ${retryCount}/${MAX_RETRIES} for requirement ${requirement.id}`);
+          console.log(`${LOG.pipeline} Retry ${retryCount}/${MAX_RETRIES} for requirement ${requirement.id} (test failed)`);
           updatePhase(pipelineId, { retryCount });
 
           if (retryCount < MAX_RETRIES) {
@@ -178,7 +207,8 @@ export async function runImplementationLoop(pipelineId: string): Promise<void> {
           updateRequirement(pipelineId, requirement.id, "failed");
           updateEpicProgress(pipelineId);
         } else {
-          console.log(`${LOG.pipeline} Retry ${retryCount}/${MAX_RETRIES} for requirement ${requirement.id} (error type: ${errorType})`);
+          const errorPreview = errorMessage.length > 50 ? errorMessage.slice(0, 47) + "..." : errorMessage;
+          console.log(`${LOG.pipeline} Retry ${retryCount}/${MAX_RETRIES} for ${requirement.id} (${errorType}: ${errorPreview})`);
           appendEvent(pipelineId, "retry_started", {
             requirementId: requirement.id,
             attempt: retryCount + 1,

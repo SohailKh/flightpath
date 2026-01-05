@@ -28,7 +28,9 @@
       "WebSearch",
       "Bash(bun -e \"import\\(''./src/lib/orchestrator/index.ts''\\)\")",
       "Bash(bun -e:*)",
-      "Bash(npm run dev:bun:*)"
+      "Bash(npm run dev:bun:*)",
+      "Bash(tsc:*)",
+      "Bash(npx bun --version)"
     ]
   }
 }

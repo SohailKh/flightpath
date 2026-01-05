@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import type { PipelineEvent, PipelinePhase, ToolEventData, StatusUpdateData } from "../types";
+import type { PipelineEvent, PipelinePhase, ToolEventData, StatusUpdateData, TodoEventData, TodoItem } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 
@@ -49,12 +49,28 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
   // Get the current status action
   const currentAction = useMemo(() => {
     if (!currentPhase) return null;
+
     const statusEvents = events.filter((e) => e.type === "status_update");
-    if (statusEvents.length === 0) {
+    const lastStatus = statusEvents[statusEvents.length - 1];
+    const completedEvents = events.filter((e) => e.type === "tool_completed");
+    const lastCompleted = completedEvents[completedEvents.length - 1];
+
+    // If a tool_completed event occurred after the last status_update,
+    // the tool finished - show the default action (e.g. "Analyzing requirements...")
+    // which describes what the agent is doing while thinking
+    if (lastCompleted && lastStatus) {
+      const statusIndex = events.indexOf(lastStatus);
+      const completedIndex = events.indexOf(lastCompleted);
+      if (completedIndex > statusIndex) {
+        return getDefaultAction(currentPhase);
+      }
+    }
+
+    if (!lastStatus) {
       return getDefaultAction(currentPhase);
     }
-    const latest = statusEvents[statusEvents.length - 1];
-    const data = latest.data as unknown as StatusUpdateData;
+
+    const data = lastStatus.data as unknown as StatusUpdateData;
     return data.action || getDefaultAction(currentPhase);
   }, [events, currentPhase]);
 
@@ -76,6 +92,7 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
           e.type === "tool_completed" ||
           e.type === "tool_error" ||
           e.type === "status_update" ||
+          e.type === "todo_update" ||
           e.type.endsWith("_started") ||
           e.type.endsWith("_completed")
       )
@@ -217,6 +234,7 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
   };
 
   const getIcon = () => {
+    if (event.type === "todo_update") return "\u2611"; // Ballot box with check
     if (event.type === "tool_started") return ">";
     if (event.type === "tool_completed") {
       // Show warning icon if outcome indicates issues
@@ -231,6 +249,7 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
   };
 
   const getColor = () => {
+    if (event.type === "todo_update") return "text-indigo-600";
     if (event.type === "tool_error") return "text-red-600 bg-red-50";
     if (event.type === "tool_completed") {
       // Yellow/warning color if outcome has issues
@@ -252,6 +271,16 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
   };
 
   const getMessage = () => {
+    if (event.type === "todo_update") {
+      const todoData = event.data as unknown as TodoEventData;
+      const inProgress = todoData.todos.filter((t: TodoItem) => t.status === "in_progress");
+      const completed = todoData.todos.filter((t: TodoItem) => t.status === "completed");
+      // Show the currently active todo's activeForm, or progress summary
+      if (inProgress.length > 0) {
+        return inProgress[0].activeForm;
+      }
+      return `Tasks: ${completed.length}/${todoData.todos.length} done`;
+    }
     if (event.type === "tool_started" && data.toolName) {
       const args = data.args as Record<string, unknown> | undefined;
       const path = args?.file_path || args?.path || "";

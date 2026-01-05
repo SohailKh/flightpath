@@ -191,6 +191,22 @@ export async function resumePipeline(pipelineId: string): Promise<void> {
   }
 }
 
+/**
+ * Resume an orphaned pipeline (e.g., after server restart)
+ * Unlike resume, this works for any non-terminal, non-running pipeline
+ */
+export async function goPipeline(pipelineId: string): Promise<void> {
+  const response = await fetch(
+    `${BACKEND_URL}/api/pipelines/${pipelineId}/go`,
+    { method: "POST" }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to go pipeline");
+  }
+}
+
 export async function getPipelineArtifacts(
   pipelineId: string
 ): Promise<{ artifacts: ArtifactRef[] }> {

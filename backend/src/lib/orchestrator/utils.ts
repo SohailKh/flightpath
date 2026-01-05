@@ -4,6 +4,9 @@
  * Logging helpers and formatting utilities used across orchestrator phases.
  */
 
+// Verbose logging - enabled by default, disable with VERBOSE=false
+export const VERBOSE = process.env.VERBOSE !== "false";
+
 // Colored log prefixes for terminal output
 export const LOG = {
   pipeline: "\x1b[36m[Pipeline]\x1b[0m",  // Cyan
@@ -14,6 +17,7 @@ export const LOG = {
   test: "\x1b[34m[Test]\x1b[0m",           // Blue
   tool: "\x1b[90m[Tool]\x1b[0m",           // Gray
   error: "\x1b[31m[Error]\x1b[0m",         // Red
+  verbose: "\x1b[90m[Verbose]\x1b[0m",    // Gray
 };
 
 /**
@@ -26,11 +30,12 @@ export function logTool(phase: string, toolName: string, args: unknown, suffix?:
 }
 
 /**
- * Log a phase event
+ * Log a phase event with optional pipeline ID correlation
  */
-export function logPhase(phase: keyof typeof LOG, message: string, detail?: string) {
+export function logPhase(phase: keyof typeof LOG, message: string, detail?: string, pipelineId?: string) {
   const prefix = LOG[phase] || LOG.pipeline;
-  console.log(`${prefix} ${message}${detail ? ": " + detail : ""}`);
+  const id = pipelineId ? `${pipelineId.slice(0, 8)} ` : "";
+  console.log(`${prefix} ${id}${message}${detail ? ": " + detail : ""}`);
 }
 
 /**
@@ -42,8 +47,8 @@ export function formatArgsPreview(args: unknown): string {
 
   if ("file_path" in obj) return String(obj.file_path);
   if ("command" in obj) {
-    const cmd = String(obj.command);
-    return cmd.length > 60 ? cmd.slice(0, 57) + "..." : cmd;
+    const cmd = String(obj.command).replace(/\n/g, "\\n");
+    return cmd.length > 120 ? cmd.slice(0, 117) + "..." : cmd;
   }
   if ("pattern" in obj) return `pattern="${obj.pattern}"`;
   if ("content" in obj) return `[content: ${String(obj.content).length} chars]`;
@@ -58,4 +63,18 @@ export function formatArgsPreview(args: unknown): string {
 export function truncateResult(result: unknown): string {
   const str = typeof result === "string" ? result : JSON.stringify(result);
   return str.length > 200 ? str.slice(0, 197) + "..." : str;
+}
+
+/**
+ * Log verbose details when VERBOSE mode is enabled
+ */
+export function logVerbose(phase: string, message: string, details?: Record<string, unknown>): void {
+  if (!VERBOSE) return;
+  console.log(`${LOG.verbose} ${phase} | ${message}`);
+  if (details) {
+    for (const [key, value] of Object.entries(details)) {
+      const str = typeof value === "string" ? value : JSON.stringify(value);
+      console.log(`${LOG.verbose} ${phase} |   ${key}: ${str.slice(0, 300)}`);
+    }
+  }
 }

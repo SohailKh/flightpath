@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, jest, mock } from "bun:test";
 
+mock.restore();
+
 const appendEvent = jest.fn();
 const logTool = jest.fn();
 const truncateResult = jest.fn(() => "truncated");
@@ -8,7 +10,9 @@ const LOG = { error: "[Error]", test: "[Test]" };
 mock.module("../pipeline", () => ({ appendEvent }));
 mock.module("./utils", () => ({ LOG, logTool, truncateResult }));
 
-const { createToolCallbacks, createServerLogCallbacks } = await import("./callbacks");
+const { createToolCallbacks, createServerLogCallbacks } = await import(
+  `./callbacks?test=${Date.now()}`
+);
 
 describe("createToolCallbacks", () => {
   beforeEach(() => {

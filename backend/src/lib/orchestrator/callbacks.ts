@@ -6,7 +6,7 @@
 
 import { appendEvent } from "../pipeline";
 import { type ToolEventCallbacks } from "../agent";
-import { LOG, logTool, truncateResult } from "./utils";
+import { LOG, logTool, truncateResult, VERBOSE, logVerbose } from "./utils";
 
 /**
  * Create tool callbacks for a specific phase
@@ -33,6 +33,16 @@ export function createToolCallbacks(
       const resultStr = typeof result === "string" ? result : JSON.stringify(result);
       const hasError = /error|failed|exception|denied|not found/i.test(resultStr);
       const outcome = hasError ? "warning" : "success";
+
+      // Verbose: log tool result details
+      if (VERBOSE) {
+        logVerbose(phaseLabel, `Tool ${toolName} completed`, {
+          outcome,
+          duration: `${durationMs}ms`,
+          result: resultStr.slice(0, 500),
+        });
+      }
+
       appendEvent(pipelineId, "tool_completed", {
         toolName,
         toolUseId,
@@ -86,6 +96,14 @@ export function emitTodoEvents(
   phase: "qa" | "exploring" | "planning" | "executing" | "testing",
   structuredOutput: unknown
 ): void {
+  // Verbose: log structured output details
+  if (VERBOSE && structuredOutput && typeof structuredOutput === "object") {
+    logVerbose(phase.toUpperCase(), "Structured output", {
+      keys: Object.keys(structuredOutput as object).join(", "),
+      preview: JSON.stringify(structuredOutput).slice(0, 200),
+    });
+  }
+
   if (!structuredOutput || typeof structuredOutput !== "object") return;
 
   const output = structuredOutput as { todos?: unknown[] };
