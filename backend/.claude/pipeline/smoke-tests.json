@@ -1,131 +1,107 @@
 {
   "featurePrefix": "weather",
-  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "generatedAt": "2025-01-08T12:00:00.000Z",
   "smokeTests": [
     {
       "id": "smoke-001",
-      "title": "Launch → Enter zipcode → See weather",
-      "platform": "mobile",
-      "epicId": "epic-core",
+      "title": "Backend returns weather for valid zipcode",
+      "platform": "backend",
+      "epicId": "epic-backend-core",
       "global": true,
-      "enabledWhen": { "requirementCompleted": "weather-019" },
+      "enabledWhen": { "requirementCompleted": "weather-008" },
       "preconditions": [
-        "App is running",
-        "Backend is running",
-        "Valid API key configured"
+        "Backend server running",
+        "Valid OPENWEATHERMAP_API_KEY configured"
       ],
       "steps": [
-        "launchApp",
-        "assertVisible:testId=zipcode-input",
-        "type:testId=zipcode-input value=90210",
-        "tap:testId=search-btn",
-        "wait:ms=2000",
-        "assertVisible:testId=weather-card",
-        "assertVisible:testId=current-temp",
-        "assertVisible:testId=location-name",
-        "screenshot:name=weather-result"
+        "curl:GET /health expect=200",
+        "curl:GET /api/weather?zipcode=90210 expect=200",
+        "assertJsonField:temperature exists",
+        "assertJsonField:condition exists",
+        "assertJsonField:humidity exists",
+        "assertJsonField:windSpeed exists",
+        "assertJsonField:locationName exists"
       ]
     },
     {
       "id": "smoke-002",
-      "title": "Invalid zipcode shows error",
-      "platform": "mobile",
-      "epicId": "epic-core",
+      "title": "Backend returns error for invalid zipcode",
+      "platform": "backend",
+      "epicId": "epic-backend-core",
       "global": false,
-      "enabledWhen": { "requirementCompleted": "weather-020" },
+      "enabledWhen": { "requirementCompleted": "weather-009" },
       "preconditions": [
-        "App is running"
+        "Backend server running"
       ],
       "steps": [
-        "launchApp",
-        "type:testId=zipcode-input value=123",
-        "tap:testId=search-btn",
-        "assertVisible:testId=zipcode-error",
-        "screenshot:name=validation-error"
+        "curl:GET /api/weather?zipcode=00000 expect=404",
+        "assertJsonField:error exists",
+        "curl:GET /api/weather?zipcode=abc expect=400",
+        "assertJsonField:error exists",
+        "curl:GET /api/weather expect=400",
+        "assertJsonField:error exists"
       ]
     },
     {
       "id": "smoke-003",
-      "title": "View 5-day forecast",
-      "platform": "mobile",
-      "epicId": "epic-forecast",
-      "global": false,
-      "enabledWhen": { "requirementCompleted": "weather-031" },
+      "title": "Frontend displays weather for valid zipcode",
+      "platform": "both",
+      "epicId": "epic-frontend-core",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "weather-025" },
       "preconditions": [
-        "App is running",
-        "Backend is running"
+        "Backend server running with valid API key",
+        "Frontend dev server running"
       ],
       "steps": [
-        "launchApp",
-        "type:testId=zipcode-input value=10001",
-        "tap:testId=search-btn",
+        "navigate:url=http://localhost:5173",
+        "assertVisible:testId=zipcode-input",
+        "assertVisible:testId=submit-button",
+        "type:testId=zipcode-input value=90210",
+        "tap:testId=submit-button",
         "wait:ms=2000",
-        "assertVisible:testId=forecast-section",
-        "assertVisible:testId=forecast-day-0",
-        "assertVisible:testId=forecast-day-4",
-        "screenshot:name=forecast-view"
+        "assertVisible:testId=weather-card",
+        "screenshot:name=weather-results"
       ]
     },
     {
       "id": "smoke-004",
-      "title": "View weather details grid",
-      "platform": "mobile",
-      "epicId": "epic-details",
+      "title": "Frontend displays error for invalid zipcode",
+      "platform": "both",
+      "epicId": "epic-frontend-core",
       "global": false,
-      "enabledWhen": { "requirementCompleted": "weather-043" },
+      "enabledWhen": { "requirementCompleted": "weather-025" },
       "preconditions": [
-        "App is running",
-        "Backend is running"
+        "Backend server running",
+        "Frontend dev server running"
       ],
       "steps": [
-        "launchApp",
-        "type:testId=zipcode-input value=60601",
-        "tap:testId=search-btn",
+        "navigate:url=http://localhost:5173",
+        "type:testId=zipcode-input value=00000",
+        "tap:testId=submit-button",
         "wait:ms=2000",
-        "assertVisible:testId=details-grid",
-        "assertVisible:testId=humidity-card",
-        "assertVisible:testId=wind-card",
-        "screenshot:name=details-grid"
+        "assertVisible:testId=error-message",
+        "screenshot:name=error-display"
       ]
     },
     {
       "id": "smoke-005",
-      "title": "Loading and error states work",
-      "platform": "mobile",
-      "epicId": "epic-ux",
+      "title": "Frontend responsive layout works",
+      "platform": "both",
+      "epicId": "epic-styling",
       "global": false,
-      "enabledWhen": { "requirementCompleted": "weather-051" },
+      "enabledWhen": { "requirementCompleted": "weather-032" },
       "preconditions": [
-        "App is running"
+        "Frontend dev server running"
       ],
       "steps": [
-        "launchApp",
-        "assertVisible:testId=empty-state",
-        "screenshot:name=empty-state",
-        "type:testId=zipcode-input value=99999",
-        "tap:testId=search-btn",
-        "assertVisible:testId=loading-skeleton",
-        "wait:ms=3000",
-        "assertVisible:testId=error-display",
-        "screenshot:name=error-state"
-      ]
-    },
-    {
-      "id": "smoke-006",
-      "title": "Dark mode toggle works",
-      "platform": "mobile",
-      "epicId": "epic-polish",
-      "global": false,
-      "enabledWhen": { "requirementCompleted": "weather-078" },
-      "preconditions": [
-        "App is running"
-      ],
-      "steps": [
-        "launchApp",
-        "screenshot:name=light-mode",
-        "tap:testId=theme-toggle",
-        "wait:ms=500",
-        "screenshot:name=dark-mode"
+        "navigate:url=http://localhost:5173",
+        "setViewport:width=375 height=667",
+        "screenshot:name=mobile-layout",
+        "setViewport:width=1280 height=800",
+        "screenshot:name=desktop-layout",
+        "assertVisible:testId=zipcode-input",
+        "assertVisible:testId=submit-button"
       ]
     }
   ]

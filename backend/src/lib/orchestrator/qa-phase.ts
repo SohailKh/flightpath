@@ -31,6 +31,7 @@ import {
   generateTargetProjectPath,
   initializeTargetProject,
 } from "./project-init";
+import { runHarness } from "../harness";
 
 /**
  * Clear any existing feature spec file to prevent contamination
@@ -42,18 +43,6 @@ function clearFeatureSpec(): void {
     unlinkSync(specPath);
     console.log(`[QA] Cleared stale feature-spec.v3.json`);
   }
-}
-
-// Forward declaration - will be set by loop.ts to avoid circular imports
-let _runImplementationLoop: ((pipelineId: string) => Promise<void>) | null = null;
-
-/**
- * Register the implementation loop runner (called from loop.ts)
- */
-export function setImplementationLoopRunner(
-  runner: (pipelineId: string) => Promise<void>
-): void {
-  _runImplementationLoop = runner;
 }
 
 /**
@@ -117,7 +106,7 @@ export async function runQAPhase(
 
     // Check if QA is complete (agent should have written feature-spec.v3.json)
     if (isQAComplete(result)) {
-      // Note: onQAComplete calls _runImplementationLoop which has its own markRunning
+      // Note: onQAComplete calls runHarness which has its own markRunning
       markStopped(pipelineId);
       await onQAComplete(pipelineId, result);
     } else {
@@ -206,7 +195,7 @@ export async function handleUserMessage(
 
     // Check if QA is complete
     if (isQAComplete(result)) {
-      // Note: onQAComplete calls _runImplementationLoop which has its own markRunning
+      // Note: onQAComplete calls runHarness which has its own markRunning
       markStopped(pipelineId);
       await onQAComplete(pipelineId, result);
     } else {
@@ -294,10 +283,13 @@ async function onQAComplete(
   setEpics(pipelineId, epics);
   updatePhase(pipelineId, { totalRequirements: requirements.length });
 
-  // Start the implementation loop
-  if (_runImplementationLoop) {
-    await _runImplementationLoop(pipelineId);
-  } else {
-    throw new Error("Implementation loop runner not registered");
-  }
+  // Start the harness with autonomous agent
+  await runHarness({
+    pipelineId,
+    requirements,
+    targetProjectPath: targetPath,
+    model: "opus",
+    maxTurns: 500,
+    enablePlaywright: true,
+  });
 }

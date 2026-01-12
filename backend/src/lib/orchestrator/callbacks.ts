@@ -34,12 +34,12 @@ export function createToolCallbacks(
       const hasError = /error|failed|exception|denied|not found/i.test(resultStr);
       const outcome = hasError ? "warning" : "success";
 
-      // Verbose: log tool result details
+      // Verbose: log tool result details (full result for debugging)
       if (VERBOSE) {
         logVerbose(phaseLabel, `Tool ${toolName} completed`, {
           outcome,
           duration: `${durationMs}ms`,
-          result: resultStr.slice(0, 500),
+          result: resultStr,
         });
       }
 
@@ -96,11 +96,11 @@ export function emitTodoEvents(
   phase: "qa" | "exploring" | "planning" | "executing" | "testing",
   structuredOutput: unknown
 ): void {
-  // Verbose: log structured output details
+  // Verbose: log structured output details (full output for debugging)
   if (VERBOSE && structuredOutput && typeof structuredOutput === "object") {
     logVerbose(phase.toUpperCase(), "Structured output", {
       keys: Object.keys(structuredOutput as object).join(", "),
-      preview: JSON.stringify(structuredOutput).slice(0, 200),
+      preview: JSON.stringify(structuredOutput),
     });
   }
 

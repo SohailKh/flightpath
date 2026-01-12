@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import type { PipelineEvent, PipelinePhase, ToolEventData, StatusUpdateData, TodoEventData, TodoItem } from "../types";
+import type { PipelineEvent, PipelinePhase, ToolEventData, StatusUpdateData, TodoEventData, TodoItem, AgentResponseData, TokenUsageData } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 
@@ -93,6 +93,8 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
           e.type === "tool_error" ||
           e.type === "status_update" ||
           e.type === "todo_update" ||
+          e.type === "agent_response" ||
+          e.type === "token_usage" ||
           e.type.endsWith("_started") ||
           e.type.endsWith("_completed")
       )
@@ -106,6 +108,7 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
     return activityEvents.filter((event) => {
       const data = event.data as unknown as ToolEventData;
       const statusData = event.data as unknown as StatusUpdateData;
+      const agentData = event.data as unknown as AgentResponseData;
       const searchableText = [
         event.type,
         data.toolName,
@@ -114,6 +117,7 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
         (data.args as Record<string, unknown>)?.path,
         (data.args as Record<string, unknown>)?.command,
         statusData.action,
+        agentData.content,
       ]
         .filter(Boolean)
         .join(" ")
@@ -235,6 +239,8 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
 
   const getIcon = () => {
     if (event.type === "todo_update") return "\u2611"; // Ballot box with check
+    if (event.type === "agent_response") return "\u{1F4AC}"; // Speech bubble
+    if (event.type === "token_usage") return "\u{1F4CA}"; // Bar chart
     if (event.type === "tool_started") return ">";
     if (event.type === "tool_completed") {
       // Show warning icon if outcome indicates issues
@@ -250,6 +256,8 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
 
   const getColor = () => {
     if (event.type === "todo_update") return "text-indigo-600";
+    if (event.type === "agent_response") return "text-purple-700 bg-purple-50";
+    if (event.type === "token_usage") return "text-teal-600 bg-teal-50";
     if (event.type === "tool_error") return "text-red-600 bg-red-50";
     if (event.type === "tool_completed") {
       // Yellow/warning color if outcome has issues
@@ -271,6 +279,14 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
   };
 
   const getMessage = () => {
+    if (event.type === "agent_response") {
+      const agentData = event.data as unknown as AgentResponseData;
+      return `Turn ${agentData.turnNumber}: ${agentData.content}`;
+    }
+    if (event.type === "token_usage") {
+      const tokenData = event.data as unknown as TokenUsageData;
+      return `Tokens: ${tokenData.inputTokens.toLocaleString()} in / ${tokenData.outputTokens.toLocaleString()} out (${tokenData.totalTurns} turns)`;
+    }
     if (event.type === "todo_update") {
       const todoData = event.data as unknown as TodoEventData;
       const inProgress = todoData.todos.filter((t: TodoItem) => t.status === "in_progress");
@@ -308,10 +324,14 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
   const fullPath = getFullPath();
   const phase = data.phase;
 
+  // Agent responses and token usage get expanded display
+  const isExpandedType = event.type === "agent_response" || event.type === "token_usage";
+
   return (
     <div
       className={cn(
-        "flex items-start gap-2 px-3 py-1 border-b border-gray-100 hover:bg-gray-50",
+        "flex items-start gap-2 px-3 border-b border-gray-100 hover:bg-gray-50",
+        isExpandedType ? "py-2" : "py-1",
         getColor()
       )}
       title={fullPath || undefined}
@@ -323,7 +343,9 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
         </span>
       )}
       <span className="w-4">{getIcon()}</span>
-      <span className="flex-1 truncate">{getMessage()}</span>
+      <span className={cn("flex-1", isExpandedType ? "whitespace-pre-wrap break-words" : "truncate")}>
+        {getMessage()}
+      </span>
       {durationToNext !== null && (
         <span className="text-gray-400 text-right flex-shrink-0 w-16">
           {formatDuration(durationToNext)}

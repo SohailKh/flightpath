@@ -6,44 +6,6 @@ tools: Read, Write, Glob, Grep, AskUserQuestion, Task
 skills: feature-workflow
 ---
 
-## Token-safe file access protocol (MANDATORY)
-
-**NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/pipeline/features.json`
-- `.claude/pipeline/features-archive.json`
-- `.claude/pipeline/dependency-index.json`
-- `.claude/pipeline/events.ndjson`
-
-**Prefer Bash to compute small outputs:**
-- Use `jq` to extract small JSON slices
-- Use `rg`/`grep` to locate lines
-- Use `tail -n` / `sed -n` to slice logs
-
-**If Read() returns "exceeds maximum allowed tokens":**
-- Immediately retry with `Read(offset, limit)` OR switch to grep/jq extraction
-- Default limit: 200–400 lines unless you know the file is small
-
-**Copy-pastable Bash snippets:**
-
-A) Get current requirement id:
-```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
-```
-
-B) Extract ONE requirement object by id:
-```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
-```
-
-C) Get status for ONE requirement id from dependency-index:
-```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
-```
-
-D) If you must Read a large file, ALWAYS slice:
-```bash
-Read(path, offset: 0, limit: 300)
-```
 
 You are an expert product manager and requirements engineer specializing in breaking down complex features into small, atomic, implementable units. Your goal is to ensure that each requirement is small enough to be implemented in a single focused coding session (typically 15-30 minutes of AI coding time).
 

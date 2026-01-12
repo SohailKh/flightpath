@@ -83,6 +83,9 @@ export type PipelineEventType =
   | "status_update"
   // Todo updates from agent
   | "todo_update"
+  // Agent visibility (for debugging/observability)
+  | "agent_response"
+  | "token_usage"
   // Parallel exploration
   | "parallel_exploration_started"
   | "parallel_exploration_completed"
@@ -120,6 +123,19 @@ export interface TodoItem {
 export interface TodoEventData {
   todos: TodoItem[];
   phase: PipelinePhase;
+}
+
+// Agent response data for agent_response events
+export interface AgentResponseData {
+  content: string;
+  turnNumber: number;
+}
+
+// Token usage data for token_usage events
+export interface TokenUsageData {
+  inputTokens: number;
+  outputTokens: number;
+  totalTurns: number;
 }
 
 export interface PipelineEvent {

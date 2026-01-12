@@ -58,11 +58,10 @@ export function formatArgsPreview(args: unknown): string {
 }
 
 /**
- * Truncate a result for logging
+ * Convert a result to string (no truncation for full visibility)
  */
 export function truncateResult(result: unknown): string {
-  const str = typeof result === "string" ? result : JSON.stringify(result);
-  return str.length > 200 ? str.slice(0, 197) + "..." : str;
+  return typeof result === "string" ? result : JSON.stringify(result);
 }
 
 /**

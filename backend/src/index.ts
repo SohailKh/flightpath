@@ -28,12 +28,11 @@ import {
   clearPipelines,
   type Pipeline,
 } from "./lib/pipeline";
-import { runImplementationLoop } from "./lib/orchestrator";
 import {
   runQAPhase,
   handleUserMessage,
-  resumePipeline,
 } from "./lib/orchestrator";
+import { runHarness } from "./lib/harness";
 import {
   getArtifact,
   listArtifacts,
@@ -514,9 +513,25 @@ app.post("/api/pipelines/:id/resume", async (c) => {
   console.log(`[API] POST /api/pipelines/${pipelineId}/resume`);
   resumePipelineState(pipelineId);
 
-  // Resume in background
+  // Get pending requirements and resume with harness
+  const pendingRequirements = pipeline.requirements.filter(
+    (r) => r.status === "pending" || r.status === "in_progress"
+  );
+
+  if (pendingRequirements.length === 0) {
+    return c.json({ ok: true, message: "No pending requirements" });
+  }
+
+  // Resume in background with harness
   setTimeout(() => {
-    resumePipeline(pipelineId).catch((err) => {
+    runHarness({
+      pipelineId,
+      requirements: pendingRequirements,
+      targetProjectPath: pipeline.targetProjectPath || process.cwd(),
+      model: "opus",
+      maxTurns: 500,
+      enablePlaywright: true,
+    }).catch((err: Error) => {
       console.error("[API] Resume error:", err);
     });
   }, 0);
@@ -548,9 +563,25 @@ app.post("/api/pipelines/:id/go", async (c) => {
 
   console.log(`[API] POST /api/pipelines/${pipelineId}/go - resuming from ${pipeline.phase.current}`);
 
-  // Resume in background
+  // Get pending requirements and resume with harness
+  const pendingRequirements = pipeline.requirements.filter(
+    (r) => r.status === "pending" || r.status === "in_progress"
+  );
+
+  if (pendingRequirements.length === 0) {
+    return c.json({ error: "No pending requirements to process" }, 400);
+  }
+
+  // Resume in background with harness
   setTimeout(() => {
-    runImplementationLoop(pipelineId).catch((err) => {
+    runHarness({
+      pipelineId,
+      requirements: pendingRequirements,
+      targetProjectPath: pipeline.targetProjectPath || process.cwd(),
+      model: "opus",
+      maxTurns: 500,
+      enablePlaywright: true,
+    }).catch((err) => {
       console.error("[API] Go error:", err);
     });
   }, 0);

@@ -15,6 +15,7 @@ export type PipelineStatus =
   | "planning"
   | "executing"
   | "testing"
+  | "running"  // Harness mode: agent is running autonomously
   | "paused"
   | "completed"
   | "failed"
@@ -68,6 +69,9 @@ export type PipelineEventType =
   | "status_update"
   // Todo updates from agent
   | "todo_update"
+  // Agent visibility (for debugging/observability)
+  | "agent_response"
+  | "token_usage"
   // Parallel exploration
   | "parallel_exploration_started"
   | "parallel_exploration_completed"
@@ -144,6 +148,9 @@ export interface Pipeline {
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
   // Target project path (where generated code goes)
   targetProjectPath?: string;
+  // Harness mode tracking (agent-driven workflow)
+  completedRequirements: string[];
+  failedRequirements: string[];
 }
 
 type EventSubscriber = (event: PipelineEvent) => void;
@@ -265,6 +272,8 @@ export function createPipeline(
     abortRequested: false,
     conversationHistory: [],
     targetProjectPath,
+    completedRequirements: [],
+    failedRequirements: [],
   };
 
   pipelines.set(id, pipeline);
@@ -420,6 +429,38 @@ export function updateRequirement(
   const req = pipeline.requirements.find((r) => r.id === requirementId);
   if (req) {
     req.status = status;
+    persistState();
+  }
+}
+
+/**
+ * Add a requirement to the completed list (harness mode)
+ */
+export function addCompletedRequirement(
+  pipelineId: string,
+  requirementId: string
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  if (!pipeline.completedRequirements.includes(requirementId)) {
+    pipeline.completedRequirements.push(requirementId);
+    persistState();
+  }
+}
+
+/**
+ * Add a requirement to the failed list (harness mode)
+ */
+export function addFailedRequirement(
+  pipelineId: string,
+  requirementId: string
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  if (!pipeline.failedRequirements.includes(requirementId)) {
+    pipeline.failedRequirements.push(requirementId);
     persistState();
   }
 }
