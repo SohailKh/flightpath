@@ -104,6 +104,8 @@ export interface ToolEventData {
   error?: string;
   phase?: PipelinePhase;
   outcome?: "success" | "warning";
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 // Status update data for status_update events

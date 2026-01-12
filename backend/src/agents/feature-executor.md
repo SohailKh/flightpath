@@ -9,10 +9,10 @@ skills: feature-workflow, swiss-ux
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/pipeline/features.json`
-- `.claude/pipeline/features-archive.json`
-- `.claude/pipeline/dependency-index.json`
-- `.claude/pipeline/events.ndjson`
+- `.claude/$FEATURE_PREFIX/features.json`
+- `.claude/$FEATURE_PREFIX/features-archive.json`
+- `.claude/$FEATURE_PREFIX/dependency-index.json`
+- `.claude/$FEATURE_PREFIX/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -25,22 +25,27 @@ skills: feature-workflow, swiss-ux
 
 **Copy-pastable Bash snippets:**
 
-A) Get current requirement id:
+A) Get feature prefix from spec:
 ```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
+FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
 ```
 
-B) Extract ONE requirement object by id:
+B) Get current requirement id:
 ```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
+REQ_ID=$(jq -r '.requirementId // empty' .claude/$FEATURE_PREFIX/current-feature.json)
 ```
 
-C) Get status for ONE requirement id from dependency-index:
+C) Extract ONE requirement object by id:
 ```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/$FEATURE_PREFIX/features.json
 ```
 
-D) If you must Read a large file, ALWAYS slice:
+D) Get status for ONE requirement id from dependency-index:
+```bash
+jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/$FEATURE_PREFIX/dependency-index.json
+```
+
+E) If you must Read a large file, ALWAYS slice:
 ```bash
 Read(path, offset: 0, limit: 300)
 ```
@@ -53,24 +58,28 @@ You are an expert software engineer specializing in React Native and backend dev
 
 Before any work:
 1. Run `git rev-parse --show-toplevel` to get the project root path
-2. Read `.claude/pipeline/features-metadata.json` and verify `lastHealthCheck.passed === true`
+2. Get the feature prefix:
+   ```bash
+   FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
+   ```
+3. Read `.claude/$FEATURE_PREFIX/features-metadata.json` and verify `lastHealthCheck.passed === true`
    - If failed or stale: STOP and invoke the Doctor agent first
-3. Read `.claude/pipeline/claude-progress.md` for recent context
-4. Read `.claude/pipeline/current-feature.json` for current plan
-5. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts rebuild`
-6. Run `git status` at repo root to check for uncommitted changes (this is a monorepo)
+4. Read `.claude/$FEATURE_PREFIX/claude-progress.md` for recent context
+5. Read `.claude/$FEATURE_PREFIX/current-feature.json` for current plan
+6. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts rebuild`
+7. Run `git status` at repo root to check for uncommitted changes (this is a monorepo)
    - Stash uncommitted changes automatically if unrelated to current work
 
 ## Your Process
 
 ### Step 1: Load the Plan
-1. Read `.claude/pipeline/current-feature.json` to get the implementation plan and `runId`
+1. Read `.claude/$FEATURE_PREFIX/current-feature.json` to get the implementation plan and `runId`
 2. **Extract requirement context via jq (token-safe):**
    ```bash
-   REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
-   jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
+   REQ_ID=$(jq -r '.requirementId // empty' .claude/$FEATURE_PREFIX/current-feature.json)
+   jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/$FEATURE_PREFIX/features.json
    ```
-   If jq fails, fall back to: `grep -n "$REQ_ID" .claude/pipeline/features.json` then `Read(path, offset: <line-50>, limit: 100)`
+   If jq fails, fall back to: `grep -n "$REQ_ID" .claude/$FEATURE_PREFIX/features.json` then `Read(path, offset: <line-50>, limit: 100)`
 3. Check `lastCheckpoint` to identify resume point (if any)
 4. Identify which steps are already completed (if resuming from a failed test)
 
@@ -134,7 +143,7 @@ Stage all modified files at repo root (this is a monorepo), commit with format `
 ### Step 5: Emit ImplementationCommitted
 1. Update `current-feature.json` with `phase: "implementing"` and `implementation` object (filesCreated, filesModified, notes)
 2. Emit `ImplementationCommitted` with `{ commit, filesCreated, filesModified }`
-3. Apply via `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -`
+3. Apply via `bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts apply -`
 
 ### Step 6: Auto-Chain to Tester
 After successful implementation, invoke the tester agent:

@@ -9,10 +9,10 @@ skills: feature-workflow
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/pipeline/features.json`
-- `.claude/pipeline/features-archive.json`
-- `.claude/pipeline/dependency-index.json`
-- `.claude/pipeline/events.ndjson`
+- `.claude/$FEATURE_PREFIX/features.json`
+- `.claude/$FEATURE_PREFIX/features-archive.json`
+- `.claude/$FEATURE_PREFIX/dependency-index.json`
+- `.claude/$FEATURE_PREFIX/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -25,22 +25,27 @@ skills: feature-workflow
 
 **Copy-pastable Bash snippets:**
 
-A) Get current requirement id:
+A) Get feature prefix from spec:
 ```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
+FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
 ```
 
-B) Extract ONE requirement object by id:
+B) Get current requirement id:
 ```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
+REQ_ID=$(jq -r '.requirementId // empty' .claude/$FEATURE_PREFIX/current-feature.json)
 ```
 
-C) Get status for ONE requirement id from dependency-index:
+C) Extract ONE requirement object by id:
 ```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/$FEATURE_PREFIX/features.json
 ```
 
-D) If you must Read a large file, ALWAYS slice:
+D) Get status for ONE requirement id from dependency-index:
+```bash
+jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/$FEATURE_PREFIX/dependency-index.json
+```
+
+E) If you must Read a large file, ALWAYS slice:
 ```bash
 Read(path, offset: 0, limit: 300)
 ```
@@ -57,9 +62,13 @@ You have access to Playwright web testing tools (web_navigate, web_click, web_ty
 
 Before any work:
 1. Run `git rev-parse --show-toplevel` to get the project root path
-2. **HEALTH GATE CHECK** (BLOCKING):
+2. Get the feature prefix:
    ```bash
-   HEALTH=$(jq -r '.lastHealthCheck.passed // false' .claude/pipeline/features-metadata.json)
+   FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
+   ```
+3. **HEALTH GATE CHECK** (BLOCKING):
+   ```bash
+   HEALTH=$(jq -r '.lastHealthCheck.passed // false' .claude/$FEATURE_PREFIX/features-metadata.json)
    if [ "$HEALTH" != "true" ]; then
      echo "ERROR: Health gate failed. Invoke Doctor agent first."
      exit 1
@@ -67,11 +76,11 @@ Before any work:
    ```
    - If failed or stale: STOP and invoke the Doctor agent first
    - Do NOT proceed with testing on an unhealthy codebase
-3. Read `.claude/pipeline/claude-progress.md` for recent context
-4. Read `.claude/pipeline/current-feature.json` to understand what was implemented
-5. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts rebuild`
-6. Check git log for the implementation commit (should match `implementation.commitHash`)
-7. Verify the implementation commit exists and is on current branch
+4. Read `.claude/$FEATURE_PREFIX/claude-progress.md` for recent context
+5. Read `.claude/$FEATURE_PREFIX/current-feature.json` to understand what was implemented
+6. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts rebuild`
+7. Check git log for the implementation commit (should match `implementation.commitHash`)
+8. Verify the implementation commit exists and is on current branch
 
 If commit hash doesn't match or is missing:
 - Log warning to progress file
@@ -83,7 +92,7 @@ If commit hash doesn't match or is missing:
 
 ```bash
 # Get next event ID
-LAST_ID=$(tail -1 .claude/pipeline/events.ndjson | jq -r '.id // "evt_000000"')
+LAST_ID=$(tail -1 .claude/$FEATURE_PREFIX/events.ndjson | jq -r '.id // "evt_000000"')
 NEXT_NUM=$((10#${LAST_ID#evt_} + 1))
 NEXT_ID=$(printf "evt_%06d" $NEXT_NUM)
 
@@ -91,7 +100,7 @@ NEXT_ID=$(printf "evt_%06d" $NEXT_NUM)
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 
 # Get session ID from features-metadata.json
-SESSION_ID=$(jq -r '.lastSessionId' .claude/pipeline/features-metadata.json)
+SESSION_ID=$(jq -r '.lastSessionId' .claude/$FEATURE_PREFIX/features-metadata.json)
 ```
 
 **Event structure:**
@@ -118,13 +127,13 @@ Before emitting `RequirementCompleted`, verify ALL exist in events.ndjson:
 **If `ImplementationCommitted` is missing:**
 ```bash
 # Check if it exists
-grep "ImplementationCommitted.*${REQ_ID}" .claude/pipeline/events.ndjson || {
+grep "ImplementationCommitted.*${REQ_ID}" .claude/$FEATURE_PREFIX/events.ndjson || {
   # Get commit from current-feature.json or git log
-  COMMIT=$(jq -r '.implementation.commitHash // empty' .claude/pipeline/current-feature.json)
+  COMMIT=$(jq -r '.implementation.commitHash // empty' .claude/$FEATURE_PREFIX/current-feature.json)
   [ -z "$COMMIT" ] && COMMIT=$(git log -1 --format=%h)
 
   # Emit ImplementationCommitted first
-  cat << EOF | bun .claude/pipeline/state.ts apply -
+  cat << EOF | bun .claude/$FEATURE_PREFIX/state.ts apply -
 {"id":"$NEXT_ID","ts":"$TIMESTAMP","sessionId":$SESSION_ID,"actor":"feature-tester","type":"ImplementationCommitted","requirementId":"$REQ_ID","idempotencyKey":"$REQ_ID-committed-s$SESSION_ID","payload":{"commit":"$COMMIT"}}
 EOF
 }
@@ -137,27 +146,27 @@ EOF
 ### Step 1: Load Context
 
 **Read small files directly:**
-1. Read `.claude/pipeline/current-feature.json` to understand what was implemented and capture `runId`
-2. Read `.claude/pipeline/features-metadata.json` for epics[] (to get smokeTestIds) (~3KB)
+1. Read `.claude/$FEATURE_PREFIX/current-feature.json` to understand what was implemented and capture `runId`
+2. Read `.claude/$FEATURE_PREFIX/features-metadata.json` for epics[] (to get smokeTestIds) (~3KB)
 
 **Extract requirement via jq (token-safe):**
 3. Use Bash+jq to extract the requirement object by id:
    ```bash
-   REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
-   jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
+   REQ_ID=$(jq -r '.requirementId // empty' .claude/$FEATURE_PREFIX/current-feature.json)
+   jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/$FEATURE_PREFIX/features.json
    ```
-4. For dependency lookups, use per-id jq (snippet C):
+4. For dependency lookups, use per-id jq (snippet D):
    ```bash
-   jq -r --arg id "$DEP_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
+   jq -r --arg id "$DEP_ID" '(.index // .)[$id] // "unknown"' .claude/$FEATURE_PREFIX/dependency-index.json
    ```
 5. Identify the specific requirement being tested (from jq output)
 6. Verify `implementation.commitHash` matches the latest commit
 
 **File Structure Overview:**
-- `features-metadata.json` - Header info, epics with smokeTestIds (~3KB) - OK to Read
-- `dependency-index.json` - use jq extraction only (can grow large)
-- `features.json` - use jq extraction only (can exceed 25k tokens)
-- `features-archive.json` - Completed requirements - NEVER Read directly
+- `.claude/$FEATURE_PREFIX/features-metadata.json` - Header info, epics with smokeTestIds (~3KB) - OK to Read
+- `.claude/$FEATURE_PREFIX/dependency-index.json` - use jq extraction only (can grow large)
+- `.claude/$FEATURE_PREFIX/features.json` - use jq extraction only (can exceed 25k tokens)
+- `.claude/$FEATURE_PREFIX/features-archive.json` - Completed requirements - NEVER Read directly
 
 ### Step 2: Prepare Testing Environment
 
@@ -207,14 +216,14 @@ For each acceptance criterion in the requirement:
 **For web requirements:**
 ```bash
 # Evidence directory is auto-created by Playwright tools
-mkdir -p .claude/pipeline/runs/${RUN_ID}/evidence
+mkdir -p .claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence
 
 # Take screenshots using Playwright
 web_screenshot name="criterion-1" → saves as criterion-1.png
 web_screenshot name="criterion-2" → saves as criterion-2.png
 
 # Evidence paths to include in TestingCompleted payload
-["screenshot:.claude/pipeline/runs/${RUN_ID}/evidence/criterion-1.png", ...]
+["screenshot:.claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/criterion-1.png", ...]
 ```
 
 **For backend/API requirements:**
@@ -223,11 +232,11 @@ web_screenshot name="criterion-2" → saves as criterion-2.png
 web_http_request method=GET url={healthCheckUrl}
 
 # Save command outputs
-{platform.typeCheckCommand} 2>&1 | tee .claude/pipeline/runs/${RUN_ID}/evidence/typecheck-output.txt
+{platform.typeCheckCommand} 2>&1 | tee .claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/typecheck-output.txt
 
 # Evidence paths to include
-["api-response:.claude/pipeline/runs/${RUN_ID}/evidence/health-response.json",
- "typecheck-log:.claude/pipeline/runs/${RUN_ID}/evidence/typecheck-output.txt"]
+["api-response:.claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/health-response.json",
+ "typecheck-log:.claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/typecheck-output.txt"]
 ```
 
 **Evidence types:**
@@ -239,13 +248,13 @@ web_http_request method=GET url={healthCheckUrl}
 ### Step 4: Smoke Test Regression
 
 **Load and filter smoke tests:**
-1. Read `.claude/pipeline/smoke-tests.json`
+1. Read `.claude/$FEATURE_PREFIX/smoke-tests.json`
 2. If file missing → log "Smoke tests not configured", skip smoke suite
 3. Filter to **enabled tests only**:
    - Check `enabledWhen.requirementCompleted`
    - Use jq to check if that requirement is completed:
      ```bash
-     jq -r --arg id "$ENABLER_REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
+     jq -r --arg id "$ENABLER_REQ_ID" '(.index // .)[$id] // "unknown"' .claude/$FEATURE_PREFIX/dependency-index.json
      ```
    - Test is enabled if status === "completed"
 4. Get the current requirement's `smokeTestRefs` array
@@ -283,7 +292,7 @@ const testsToRun = [...queue].filter(id => isEnabled(id));
 - `fill:testId=X value=Y` → `web_fill` (clear and type)
 - `assertVisible:testId=X` → `web_assert_visible` element
 - `assertText:testId=X expect=Y` → `web_assert_text` content
-- `screenshot:name=X` → `web_screenshot`, save under `.claude/pipeline/runs/{runId}/evidence/`
+- `screenshot:name=X` → `web_screenshot`, save under `.claude/$FEATURE_PREFIX/runs/{runId}/evidence/`
 - `wait:ms=N` → `web_wait` for animations/network
 - `curl:METHOD /path expect=CODE` → `web_http_request` for API testing
 
@@ -306,7 +315,7 @@ const testsToRun = [...queue].filter(id => isEnabled(id));
 **Backward compatibility:**
 - No smoke-tests.json → skip smoke suite, log warning
 - No smokeTestRefs on requirement → only run epic + global tests
-- If derived views are missing/empty → run `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts rebuild`
+- If derived views are missing/empty → run `bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts rebuild`
 
 ### Step 5: Update State Based on Results
 
@@ -325,16 +334,16 @@ const testsToRun = [...queue].filter(id => isEnabled(id));
    REQ_ID="gp-XXX"  # Current requirement
 
    # Verify all prerequisite events exist
-   grep "RequirementStarted.*$REQ_ID" .claude/pipeline/events.ndjson || echo "MISSING: RequirementStarted"
-   grep "PlanCreated.*$REQ_ID" .claude/pipeline/events.ndjson || echo "MISSING: PlanCreated"
-   grep "ImplementationCommitted.*$REQ_ID" .claude/pipeline/events.ndjson || echo "MISSING: ImplementationCommitted"
-   grep "TestingCompleted.*$REQ_ID" .claude/pipeline/events.ndjson || echo "MISSING: TestingCompleted"
+grep "RequirementStarted.*$REQ_ID" .claude/$FEATURE_PREFIX/events.ndjson || echo "MISSING: RequirementStarted"
+grep "PlanCreated.*$REQ_ID" .claude/$FEATURE_PREFIX/events.ndjson || echo "MISSING: PlanCreated"
+grep "ImplementationCommitted.*$REQ_ID" .claude/$FEATURE_PREFIX/events.ndjson || echo "MISSING: ImplementationCommitted"
+grep "TestingCompleted.*$REQ_ID" .claude/$FEATURE_PREFIX/events.ndjson || echo "MISSING: TestingCompleted"
 
    # If ImplementationCommitted is missing, emit it now (see Event Emission Protocol)
    ```
 
 4. Emit `RequirementCompleted` with `{ completedAt, sessionCompleted }`
-5. Apply each event via `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -`
+5. Apply each event via `bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts apply -`
 6. **Clear current-feature.json**
 7. **Append to progress file** with smoke summary: "Smoke: 5/5 passed (2 applicable, 2 epic, 1 global)"
 8. Check for more pending requirements
@@ -358,7 +367,7 @@ Pass the implementation commit hash when available to capture `diff-commit.patch
 
 ### Session Summary Protocol
 
-**Append lean session entry to `.claude/pipeline/claude-progress.md`:**
+**Append lean session entry to `.claude/$FEATURE_PREFIX/claude-progress.md`:**
 ```markdown
 ## Session {N} - {YYYY-MM-DD}
 

@@ -61,6 +61,13 @@ export function ResponseLog({
           timestamp: event.ts,
           userQuestions: event.data.userQuestions as AskUserQuestion[] | undefined,
         });
+      } else if (event.type === "agent_response" && "content" in event.data) {
+        entries.push({
+          type: "message",
+          role: "assistant",
+          content: String(event.data.content),
+          timestamp: event.ts,
+        });
       } else if (event.type === "status_update" && "message" in event.data) {
         entries.push({
           type: "status",

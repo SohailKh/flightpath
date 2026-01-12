@@ -34,14 +34,28 @@ import {
 import { runHarness } from "../harness";
 
 /**
- * Clear any existing feature spec file to prevent contamination
+ * Clear any existing feature spec files to prevent contamination
  * from previous pipelines.
  */
-function clearFeatureSpec(): void {
-  const specPath = join(FLIGHTPATH_ROOT, ".claude", "pipeline", "feature-spec.v3.json");
-  if (existsSync(specPath)) {
-    unlinkSync(specPath);
-    console.log(`[QA] Cleared stale feature-spec.v3.json`);
+async function clearFeatureSpecs(): Promise<void> {
+  const { readdir } = await import("node:fs/promises");
+
+  const claudeDir = join(FLIGHTPATH_ROOT, ".claude");
+  if (!existsSync(claudeDir)) return;
+
+  try {
+    const entries = await readdir(claudeDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name !== "skills") {
+        const specPath = join(claudeDir, entry.name, "feature-spec.v3.json");
+        if (existsSync(specPath)) {
+          unlinkSync(specPath);
+          console.log(`[QA] Cleared stale feature-spec.v3.json from .claude/${entry.name}/`);
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
   }
 }
 
@@ -60,7 +74,7 @@ export async function runQAPhase(
   markRunning(pipelineId);
 
   console.log(`${LOG.qa} Starting QA phase for pipeline ${pipelineId.slice(0, 8)}`);
-  clearFeatureSpec();
+  await clearFeatureSpecs();
   appendEvent(pipelineId, "qa_started", { initialPrompt });
   updatePhase(pipelineId, { current: "qa" });
 
@@ -213,6 +227,31 @@ export async function handleUserMessage(
 }
 
 /**
+ * Find if any feature spec file exists in .claude/{prefix}/ folders
+ */
+function findExistingSpecPath(): string | null {
+  const { readdirSync } = require("node:fs");
+
+  const claudeDir = join(FLIGHTPATH_ROOT, ".claude");
+  if (!existsSync(claudeDir)) return null;
+
+  try {
+    const entries = readdirSync(claudeDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name !== "skills") {
+        const specPath = join(claudeDir, entry.name, "feature-spec.v3.json");
+        if (existsSync(specPath)) {
+          return specPath;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return null;
+}
+
+/**
  * Check if QA phase is complete
  * Uses file-based detection for reliability instead of string matching.
  */
@@ -229,12 +268,11 @@ function isQAComplete(result: PipelineAgentResult): boolean {
     return true;
   }
 
-  // Fallback: Check actual file existence
-  const specPath = join(FLIGHTPATH_ROOT, ".claude", "pipeline", "feature-spec.v3.json");
-  const fileExists = existsSync(specPath);
+  // Fallback: Check actual file existence in any .claude/{prefix}/ folder
+  const specPath = findExistingSpecPath();
 
-  if (fileExists) {
-    console.log(`${LOG.qa} Checking completion... result=true (spec file exists)`);
+  if (specPath) {
+    console.log(`${LOG.qa} Checking completion... result=true (spec file exists at ${specPath})`);
     return true;
   }
 
@@ -254,10 +292,10 @@ async function onQAComplete(
     message: "Requirements have been generated",
   });
 
-  // Parse requirements, epics, and project name from the feature spec
-  const { requirements, epics, projectName } = await parseRequirementsFromSpec();
+  // Parse requirements, epics, project name, and feature prefix from the feature spec
+  const { requirements, epics, projectName, featurePrefix } = await parseRequirementsFromSpec();
 
-  console.log(`${LOG.qa} Complete. Found ${requirements.length} requirements, ${epics.length} epics, project: ${projectName}`);
+  console.log(`${LOG.qa} Complete. Found ${requirements.length} requirements, ${epics.length} epics, project: ${projectName}, prefix: ${featurePrefix}`);
 
   if (requirements.length === 0) {
     appendEvent(pipelineId, "pipeline_failed", {
@@ -272,7 +310,7 @@ async function onQAComplete(
   setTargetProjectPath(pipelineId, targetPath);
 
   // Create target directory and copy feature spec
-  await initializeTargetProject(targetPath);
+  await initializeTargetProject(targetPath, featurePrefix);
 
   appendEvent(pipelineId, "target_project_set", {
     projectName,

@@ -101,11 +101,33 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
       .slice(-maxItems);
   }, [events, maxItems]);
 
+  // Deduplicate consecutive identical status_update events
+  const deduplicatedEvents = useMemo(() => {
+    const result: typeof activityEvents = [];
+    for (const event of activityEvents) {
+      const lastEvent = result[result.length - 1];
+      // Skip consecutive duplicate status_update events
+      if (
+        event.type === "status_update" &&
+        lastEvent?.type === "status_update" &&
+        "action" in event.data &&
+        "action" in lastEvent.data &&
+        (event.data as StatusUpdateData).action === (lastEvent.data as StatusUpdateData).action
+      ) {
+        // Replace with the newer event (keeps most recent timestamp)
+        result[result.length - 1] = event;
+        continue;
+      }
+      result.push(event);
+    }
+    return result;
+  }, [activityEvents]);
+
   // Apply text search filter
   const filteredEvents = useMemo(() => {
-    if (!search.trim()) return activityEvents;
+    if (!search.trim()) return deduplicatedEvents;
     const searchLower = search.toLowerCase();
-    return activityEvents.filter((event) => {
+    return deduplicatedEvents.filter((event) => {
       const data = event.data as unknown as ToolEventData;
       const statusData = event.data as unknown as StatusUpdateData;
       const agentData = event.data as unknown as AgentResponseData;
@@ -124,7 +146,7 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
         .toLowerCase();
       return searchableText.includes(searchLower);
     });
-  }, [activityEvents, search]);
+  }, [deduplicatedEvents, search]);
 
   // Auto-scroll to bottom when new events arrive (not when filtering)
   useEffect(() => {
@@ -237,6 +259,13 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
     return `${ms}ms`;
   };
 
+  const formatTokenCount = (tokens: number): string => {
+    if (tokens >= 1000) {
+      return `${(tokens / 1000).toFixed(1)}K`;
+    }
+    return tokens.toString();
+  };
+
   const getIcon = () => {
     if (event.type === "todo_update") return "\u2611"; // Ballot box with check
     if (event.type === "agent_response") return "\u{1F4AC}"; // Speech bubble
@@ -308,7 +337,12 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
     if (event.type === "tool_completed" && data.toolName) {
       // Include duration in completed message
       const duration = data.durationMs ? ` (${formatToolDuration(data.durationMs)})` : "";
-      return `${data.toolName} done${duration}`;
+      // Include token usage if available
+      const hasTokens = data.inputTokens !== undefined || data.outputTokens !== undefined;
+      const tokenDisplay = hasTokens
+        ? ` [${formatTokenCount(data.inputTokens ?? 0)} in / ${formatTokenCount(data.outputTokens ?? 0)} out]`
+        : "";
+      return `${data.toolName} done${duration}${tokenDisplay}`;
     }
     if (event.type === "tool_error" && data.toolName) {
       return `${data.toolName} failed: ${data.error}`;

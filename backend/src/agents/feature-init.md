@@ -9,10 +9,10 @@ skills: feature-workflow
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/pipeline/features.json`
-- `.claude/pipeline/features-archive.json`
-- `.claude/pipeline/dependency-index.json`
-- `.claude/pipeline/events.ndjson`
+- `.claude/$FEATURE_PREFIX/features.json`
+- `.claude/$FEATURE_PREFIX/features-archive.json`
+- `.claude/$FEATURE_PREFIX/dependency-index.json`
+- `.claude/$FEATURE_PREFIX/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -25,22 +25,27 @@ skills: feature-workflow
 
 **Copy-pastable Bash snippets:**
 
-A) Get current requirement id:
+A) Get feature prefix from spec:
 ```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
+FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
 ```
 
-B) Extract ONE requirement object by id:
+B) Get current requirement id:
 ```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
+REQ_ID=$(jq -r '.requirementId // empty' .claude/$FEATURE_PREFIX/current-feature.json)
 ```
 
-C) Get status for ONE requirement id from dependency-index:
+C) Extract ONE requirement object by id:
 ```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/$FEATURE_PREFIX/features.json
 ```
 
-D) If you must Read a large file, ALWAYS slice:
+D) Get status for ONE requirement id from dependency-index:
+```bash
+jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/$FEATURE_PREFIX/dependency-index.json
+```
+
+E) If you must Read a large file, ALWAYS slice:
 ```bash
 Read(path, offset: 0, limit: 300)
 ```
@@ -57,11 +62,15 @@ This agent runs with `cwd` set to the target project directory at `~/flightpath-
 
 Before any work:
 1. Run `git rev-parse --show-toplevel` to get the project root path
-2. Check if `.claude/pipeline/features-metadata.json` exists:
+2. Get the feature prefix:
+   ```bash
+   FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
+   ```
+3. Check if `.claude/$FEATURE_PREFIX/features-metadata.json` exists:
    - If yes, check `lastHealthCheck.passed === true` (or invoke Doctor if stale/failed)
    - If no (fresh feature), the Doctor should have been run before Init
-3. Read `.claude/pipeline/claude-progress.md` for recent session context (if it exists)
-4. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts rebuild`
+4. Read `.claude/$FEATURE_PREFIX/claude-progress.md` for recent session context (if it exists)
+5. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts rebuild`
 
 **Do NOT fix type errors yourself.** If you encounter type errors:
 1. Log to progress file: "Type errors detected - requires Doctor gate"
@@ -114,15 +123,17 @@ Before any work:
 
 4. **Create the .claude directory structure:**
    ```bash
-   mkdir -p .claude/pipeline
-   mkdir -p .claude/pipeline/artifacts
+   # FEATURE_PREFIX should already be set from bootstrap, or read from spec
+   FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
+   mkdir -p .claude/$FEATURE_PREFIX
+   mkdir -p .claude/$FEATURE_PREFIX/artifacts
    ```
 
 ### Step 1: Analyze Features
 
 **Read from source of truth:**
-1. Read `.claude/pipeline/feature-spec.v3.json`
-2. Read `.claude/pipeline/features-metadata.json` (derived) for stats if present
+1. Read `.claude/$FEATURE_PREFIX/feature-spec.v3.json`
+2. Read `.claude/$FEATURE_PREFIX/features-metadata.json` (derived) for stats if present
 3. Extract `featureName` and determine `featurePrefix` (first word, lowercase, e.g., "auth", "nav")
 4. Use the feature prefix automatically (no confirmation needed)
 5. Determine primary platform automatically (if spec omits it, default to "mobile" on ties)
@@ -141,7 +152,7 @@ Use the **Branch Prefix** from the Project Context section above.
 
 ### Step 3: Generate init.sh Script
 
-Create `.claude/pipeline/init.sh` with conditional setup for each enabled platform from Project Context:
+Create `.claude/$FEATURE_PREFIX/init.sh` with conditional setup for each enabled platform from Project Context:
 - For each platform, add install and type check commands based on the platform's `packageManager` and `typeCheckCommand`
 - Example: `cd {platform.directory} && {packageManager} install && {typeCheckCommand}`
 
@@ -159,7 +170,7 @@ Create an event JSON and apply it via the state engine:
   "payload": {
     "baseBranch": "main",
     "featureBranch": "{branchPrefix}/{feature-prefix}-{YYYYMMDD}",
-    "initScript": ".claude/pipeline/init.sh",
+    "initScript": ".claude/$FEATURE_PREFIX/init.sh",
     "primaryPlatform": "{from Project Context defaults}"
   }
 }
@@ -167,7 +178,7 @@ Create an event JSON and apply it via the state engine:
 
 Apply:
 ```
-cat event.json | bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -
+cat event.json | bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts apply -
 ```
 
 ### Step 5: Initial Git Commit

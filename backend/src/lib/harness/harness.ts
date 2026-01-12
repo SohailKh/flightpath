@@ -1,15 +1,12 @@
 /**
  * Harness
  *
- * Thin wrapper that runs the unified agent with full autonomy.
+ * Thin wrapper that runs the agent with full autonomy.
  * The agent decides phases, retries, and workflow - harness just provides
  * the environment and handles cleanup.
  */
 
 import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { existsSync } from "node:fs";
 
 import {
   getPipeline,
@@ -20,7 +17,6 @@ import {
   isAbortRequested,
   type Requirement,
 } from "../pipeline";
-import { loadProjectConfig, generateProjectContext } from "../project-config";
 import { EventBridge } from "./event-bridge";
 import {
   isWorkflowTool,
@@ -36,9 +32,6 @@ import {
   executePlaywrightTool,
   formatPlaywrightToolsForPrompt,
 } from "../playwright-tools";
-
-// Flightpath root directory
-const FLIGHTPATH_ROOT = resolve(import.meta.dirname, "..", "..", "..");
 
 /**
  * Harness configuration
@@ -65,41 +58,14 @@ export interface HarnessResult {
 }
 
 /**
- * Load the unified agent prompt
- */
-async function loadUnifiedAgentPrompt(targetProjectPath?: string): Promise<string> {
-  const promptPath = join(FLIGHTPATH_ROOT, "src", "agents", "feature-unified.md");
-
-  if (!existsSync(promptPath)) {
-    throw new Error(`Unified agent prompt not found: ${promptPath}`);
-  }
-
-  const rawContent = await readFile(promptPath, "utf-8");
-
-  // Extract content after frontmatter
-  const frontmatterEnd = rawContent.indexOf("---", 4);
-  let content = frontmatterEnd === -1 ? rawContent : rawContent.substring(frontmatterEnd + 3).trim();
-
-  // Inject project context if target path provided
-  if (targetProjectPath) {
-    const config = await loadProjectConfig(targetProjectPath);
-    const contextSection = generateProjectContext(config);
-    content = contextSection + "\n\n" + content;
-  }
-
-  return content;
-}
-
-/**
- * Build the full prompt for the unified agent
+ * Build the full prompt for the agent
  */
 function buildPrompt(
-  systemPrompt: string,
   requirements: Requirement[],
   targetProjectPath: string,
   enablePlaywright: boolean
 ): string {
-  let prompt = systemPrompt + "\n\n";
+  let prompt = ""
 
   // Add workflow tool definitions
   prompt += WORKFLOW_TOOL_DEFINITIONS + "\n\n";
@@ -129,7 +95,7 @@ function buildPrompt(
 }
 
 /**
- * Run the harness with the unified agent
+ * Run the harness with the agent
  */
 export async function runHarness(config: HarnessConfig): Promise<HarnessResult> {
   const {
@@ -157,6 +123,10 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
   let totalTurns = 0;
   let aborted = false;
 
+  // Token tracking for per-step deltas
+  let previousInputTokens = 0;
+  let previousOutputTokens = 0;
+
   // Initialize event bridge
   const eventBridge = new EventBridge(pipelineId);
 
@@ -167,11 +137,10 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
 
   try {
     // Load and build prompt
-    const systemPrompt = await loadUnifiedAgentPrompt(targetProjectPath);
-    const fullPrompt = buildPrompt(systemPrompt, requirements, targetProjectPath, enablePlaywright);
+    const fullPrompt = buildPrompt(requirements, targetProjectPath, enablePlaywright);
 
     appendEvent(pipelineId, "status_update", {
-      action: "Starting unified agent...",
+      action: "Starting agent...",
     });
 
     // Run the agent
@@ -310,12 +279,27 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
         console.log(`[Harness] Turn ${totalTurns}/${maxTurns}`);
 
         // Emit agent_response event with the full content
-        const assistantMsg = msg as { type: "assistant"; content?: string };
+        const assistantMsg = msg as {
+          type: "assistant";
+          content?: string;
+          message?: { usage?: { input_tokens?: number; output_tokens?: number } };
+        };
         if (assistantMsg.content) {
           appendEvent(pipelineId, "agent_response", {
             content: assistantMsg.content,
             turnNumber: totalTurns,
           });
+        }
+
+        // Extract token usage and pass delta to EventBridge for next tool_completed
+        if (assistantMsg.message?.usage) {
+          const usage = assistantMsg.message.usage;
+          const deltaInput = (usage.input_tokens ?? 0) - previousInputTokens;
+          const deltaOutput = (usage.output_tokens ?? 0) - previousOutputTokens;
+          previousInputTokens = usage.input_tokens ?? 0;
+          previousOutputTokens = usage.output_tokens ?? 0;
+
+          eventBridge.setTurnTokenDelta(deltaInput, deltaOutput);
         }
       }
 

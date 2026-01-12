@@ -1,7 +1,7 @@
 /**
  * Workflow Tools
  *
- * Custom tools that the unified agent uses to signal state changes.
+ * Custom tools that the agent uses to signal state changes.
  * These are intercepted by the harness via SDK hooks and handled specially.
  */
 

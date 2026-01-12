@@ -1,7 +1,7 @@
 /**
  * Event Bridge
  *
- * Bridges tool calls from the unified agent to pipeline events for UI.
+ * Bridges tool calls from the agent to pipeline events for UI.
  * Infers "phase" from tool type for backward compatibility with UI.
  */
 
@@ -121,9 +121,35 @@ export class EventBridge {
   private pipelineId: string;
   private currentPhase: InferredPhase = "unknown";
   private toolStartTimes = new Map<string, number>();
+  private turnInputTokens = 0;
+  private turnOutputTokens = 0;
 
   constructor(pipelineId: string) {
     this.pipelineId = pipelineId;
+  }
+
+  /**
+   * Set token delta for the current turn (called from harness after each assistant message)
+   */
+  setTurnTokenDelta(inputTokens: number, outputTokens: number): void {
+    this.turnInputTokens = inputTokens;
+    this.turnOutputTokens = outputTokens;
+  }
+
+  /**
+   * Get and clear the current turn's token usage
+   */
+  private consumeTurnTokens(): { inputTokens: number; outputTokens: number } | null {
+    if (this.turnInputTokens === 0 && this.turnOutputTokens === 0) {
+      return null;
+    }
+    const tokens = {
+      inputTokens: this.turnInputTokens,
+      outputTokens: this.turnOutputTokens,
+    };
+    this.turnInputTokens = 0;
+    this.turnOutputTokens = 0;
+    return tokens;
   }
 
   /**
@@ -185,6 +211,9 @@ export class EventBridge {
     const hasError = /error|failed|exception|denied|not found/i.test(resultStr);
     const outcome = hasError ? "warning" : "success";
 
+    // Get token usage for this step
+    const tokenUsage = this.consumeTurnTokens();
+
     appendEvent(this.pipelineId, "tool_completed", {
       toolName,
       toolUseId,
@@ -192,6 +221,10 @@ export class EventBridge {
       result: passResult(result),
       outcome,
       inferredPhase: this.currentPhase,
+      ...(tokenUsage && {
+        inputTokens: tokenUsage.inputTokens,
+        outputTokens: tokenUsage.outputTokens,
+      }),
     });
   }
 

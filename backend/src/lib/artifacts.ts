@@ -7,7 +7,12 @@ import { mkdir, writeFile, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 
-const ARTIFACTS_BASE_DIR = ".claude/pipeline/artifacts";
+/**
+ * Get the artifacts base directory path for a given feature prefix
+ */
+function getArtifactsBasePath(featurePrefix: string): string {
+  return `.claude/${featurePrefix}/artifacts`;
+}
 
 export type ArtifactType = "screenshot" | "test_result" | "diff";
 
@@ -22,10 +27,11 @@ export interface SavedArtifact {
 /**
  * Get the artifacts directory
  * Uses targetProjectPath if provided, otherwise falls back to process.cwd()
+ * featurePrefix defaults to "pipeline" for backward compatibility
  */
-function getArtifactsDir(targetProjectPath?: string): string {
+function getArtifactsDir(targetProjectPath?: string, featurePrefix: string = "pipeline"): string {
   const baseDir = targetProjectPath || process.cwd();
-  return join(baseDir, ARTIFACTS_BASE_DIR);
+  return join(baseDir, getArtifactsBasePath(featurePrefix));
 }
 
 /**
@@ -104,7 +110,7 @@ export async function saveArtifact(
   return {
     id,
     type,
-    path: join(ARTIFACTS_BASE_DIR, filename),
+    path: join(getArtifactsBasePath("pipeline"), filename),
     size: stats.size,
     createdAt: new Date().toISOString(),
   };
@@ -185,7 +191,7 @@ export async function listArtifacts(
       artifacts.push({
         id: file.replace(/\.[^.]+$/, ""), // Remove extension
         type: type as ArtifactType,
-        path: join(ARTIFACTS_BASE_DIR, file),
+        path: join(getArtifactsBasePath("pipeline"), file),
         size: stats.size,
         createdAt: new Date(parseInt(timestamp, 10)).toISOString(),
       });

@@ -66,14 +66,21 @@ export function generateTargetProjectPath(projectName: string): string {
 }
 
 /**
+ * Get the pipeline directory path for a given feature prefix
+ */
+export function getProjectPipelinePath(featurePrefix: string): string {
+  return `.claude/${featurePrefix}`;
+}
+
+/**
  * Initialize the target project directory and copy feature spec
  */
-export async function initializeTargetProject(targetPath: string): Promise<void> {
+export async function initializeTargetProject(targetPath: string, featurePrefix: string): Promise<void> {
   const { mkdir, copyFile } = await import("node:fs/promises");
   const { existsSync } = await import("node:fs");
 
-  // Create target directory structure
-  const claudeDir = join(targetPath, ".claude", "pipeline");
+  // Create target directory structure using feature prefix
+  const claudeDir = join(targetPath, ".claude", featurePrefix);
   await mkdir(claudeDir, { recursive: true });
 
   // Initialize git repository so agent commits go to the right place
@@ -81,7 +88,8 @@ export async function initializeTargetProject(targetPath: string): Promise<void>
   console.log(`[Orchestrator] Initialized git repository at ${targetPath}`);
 
   // Copy feature spec from flightpath to target project
-  const sourceSpec = join(FLIGHTPATH_ROOT, ".claude", "pipeline", "feature-spec.v3.json");
+  // Source: look in any .claude/{prefix}/ folder for feature-spec.v3.json
+  const sourceSpec = join(FLIGHTPATH_ROOT, ".claude", featurePrefix, "feature-spec.v3.json");
   const targetSpec = join(claudeDir, "feature-spec.v3.json");
 
   if (existsSync(sourceSpec)) {
@@ -96,6 +104,33 @@ export interface ParsedFeatureSpec {
   requirements: Requirement[];
   epics: Epic[];
   projectName: string;
+  featurePrefix: string;
+}
+
+/**
+ * Find the feature spec file in any .claude/{prefix}/ folder
+ */
+async function findFeatureSpecPath(): Promise<string | null> {
+  const { readdir } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+
+  const claudeDir = join(FLIGHTPATH_ROOT, ".claude");
+  if (!existsSync(claudeDir)) return null;
+
+  try {
+    const entries = await readdir(claudeDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name !== "skills") {
+        const specPath = join(claudeDir, entry.name, "feature-spec.v3.json");
+        if (existsSync(specPath)) {
+          return specPath;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return null;
 }
 
 /**
@@ -104,30 +139,25 @@ export interface ParsedFeatureSpec {
 export async function parseRequirementsFromSpec(): Promise<ParsedFeatureSpec> {
   try {
     const { readFile } = await import("node:fs/promises");
-    const { existsSync } = await import("node:fs");
 
-    const specPath = join(
-      FLIGHTPATH_ROOT,
-      ".claude",
-      "pipeline",
-      "feature-spec.v3.json"
-    );
+    const specPath = await findFeatureSpecPath();
 
-    if (!existsSync(specPath)) {
-      console.warn("Feature spec not found:", specPath);
-      return { requirements: [], epics: [], projectName: "untitled-project" };
+    if (!specPath) {
+      console.warn("Feature spec not found in any .claude/{prefix}/ folder");
+      return { requirements: [], epics: [], projectName: "untitled-project", featurePrefix: "untitled" };
     }
 
     const content = await readFile(specPath, "utf-8");
     const spec = JSON.parse(content);
 
-    // Extract project/feature name
+    // Extract project/feature name and prefix
     const projectName = String(
       spec.featureName || spec.projectName || spec.name || "untitled-project"
     );
+    const featurePrefix = String(spec.featurePrefix || "untitled");
 
     if (!spec.requirements || !Array.isArray(spec.requirements)) {
-      return { requirements: [], epics: [], projectName };
+      return { requirements: [], epics: [], projectName, featurePrefix };
     }
 
     const requirements = spec.requirements.map(
@@ -184,9 +214,9 @@ export async function parseRequirementsFromSpec(): Promise<ParsedFeatureSpec> {
     validateUniqueIds(requirements, "requirement");
     validateUniqueIds(epics, "epic");
 
-    return { requirements, epics, projectName };
+    return { requirements, epics, projectName, featurePrefix };
   } catch (error) {
     console.error("Error parsing requirements:", error);
-    return { requirements: [], epics: [], projectName: "untitled-project" };
+    return { requirements: [], epics: [], projectName: "untitled-project", featurePrefix: "untitled" };
   }
 }

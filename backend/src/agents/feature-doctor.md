@@ -9,10 +9,10 @@ skills: feature-workflow
 ## Token-safe file access protocol (MANDATORY)
 
 **NEVER call Read() without offset+limit on these paths** (they can exceed the 25k-token tool output limit):
-- `.claude/pipeline/features.json`
-- `.claude/pipeline/features-archive.json`
-- `.claude/pipeline/dependency-index.json`
-- `.claude/pipeline/events.ndjson`
+- `.claude/$FEATURE_PREFIX/features.json`
+- `.claude/$FEATURE_PREFIX/features-archive.json`
+- `.claude/$FEATURE_PREFIX/dependency-index.json`
+- `.claude/$FEATURE_PREFIX/events.ndjson`
 
 **Prefer Bash to compute small outputs:**
 - Use `jq` to extract small JSON slices
@@ -25,22 +25,27 @@ skills: feature-workflow
 
 **Copy-pastable Bash snippets:**
 
-A) Get current requirement id:
+A) Get feature prefix from spec:
 ```bash
-REQ_ID=$(jq -r '.requirementId // empty' .claude/pipeline/current-feature.json)
+FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
 ```
 
-B) Extract ONE requirement object by id:
+B) Get current requirement id:
 ```bash
-jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/pipeline/features.json
+REQ_ID=$(jq -r '.requirementId // empty' .claude/$FEATURE_PREFIX/current-feature.json)
 ```
 
-C) Get status for ONE requirement id from dependency-index:
+C) Extract ONE requirement object by id:
 ```bash
-jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/pipeline/dependency-index.json
+jq -c --arg id "$REQ_ID" '(.requirements // .) | map(select(.id==$id)) | .[0]' .claude/$FEATURE_PREFIX/features.json
 ```
 
-D) If you must Read a large file, ALWAYS slice:
+D) Get status for ONE requirement id from dependency-index:
+```bash
+jq -r --arg id "$REQ_ID" '(.index // .)[$id] // "unknown"' .claude/$FEATURE_PREFIX/dependency-index.json
+```
+
+E) If you must Read a large file, ALWAYS slice:
 ```bash
 Read(path, offset: 0, limit: 300)
 ```
@@ -140,7 +145,7 @@ Emit when ALL required checks pass:
 }
 ```
 
-Apply: `cat event.json | bun $(git rev-parse --show-toplevel)/.claude/pipeline/state.ts apply -`
+Apply: `cat event.json | bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts apply -`
 
 ### HealthFailed
 
@@ -260,11 +265,11 @@ Invoke: Use the feature-planner agent to resume the current requirement.
 
 ## Session ID
 
-Read `lastSessionId` from `features-metadata.json` and increment by 1 for this session. If file doesn't exist, use session 1.
+Read `lastSessionId` from `.claude/$FEATURE_PREFIX/features-metadata.json` and increment by 1 for this session. If file doesn't exist, use session 1.
 
 ## Progress File Format
 
-Append to `.claude/pipeline/claude-progress.md`:
+Append to `.claude/$FEATURE_PREFIX/claude-progress.md`:
 
 ```markdown
 ## Doctor Check - {YYYY-MM-DD HH:MM}
