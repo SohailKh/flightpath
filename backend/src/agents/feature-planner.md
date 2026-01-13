@@ -206,35 +206,47 @@ jq '.exploration' .claude/$FEATURE_PREFIX/current-feature.json
 
 ### Step 3.5: Research When Needed
 
-If the requirement involves unfamiliar technologies or you need current best practices, spawn a research subagent before creating the implementation plan.
+If the requirement involves unfamiliar technologies or you need current best practices, spawn the `research-web` agent before creating the implementation plan.
 
 **When to research:**
-- The requirement references libraries/APIs you're not confident about
-- You need to verify the best implementation approach
-- External service integration patterns are unclear
-- You want to check for common pitfalls
+- The requirement references libraries/APIs not found in exploration results
+- External service integration (payments, auth, analytics, etc.)
+- You need to verify the best current implementation approach
+- Platform-specific patterns are unclear
+- You want to find the **latest SDK versions** and avoid deprecated patterns
 
 **How to research:**
-Use the Task tool with `subagent_type="general-purpose"`:
+Use the Task tool with `subagent_type="research-web"`:
 
 ```
 Task tool parameters:
-  subagent_type: "general-purpose"
-  description: "Research [implementation topic]"
-  prompt: "Search the web to find:
-    - Current best practices for implementing [specific feature]
-    - Official API documentation for [service/library]
-    - Code examples and recommended patterns
-    - Version-specific considerations for [dependency]
+  subagent_type: "research-web"
+  description: "Research [technology/library name]"
+  prompt: "Research best practices for implementing [specific feature/technology].
 
-    Provide specific, actionable implementation guidance."
+    Context from exploration:
+    - Existing patterns: [list relevant patterns from exploration]
+    - Related files: [from relatedFiles]
+
+    Find:
+    - Latest stable SDK/library versions
+    - Current recommended implementation approach (2024-2025)
+    - Official documentation and setup guides
+    - Deprecated patterns to avoid
+    - Common pitfalls and how to handle them
+    - Platform-specific considerations (if applicable)
+
+    Focus on: [specific aspects relevant to this requirement]"
 ```
 
+The research agent will return structured JSON with `latestVersions`, `currentBestPractices`, `deprecatedPatterns`, `pitfalls`, and `documentationLinks`.
+
 **Incorporate into planning:**
-- Reference authoritative sources in step descriptions
-- Note version-specific considerations in plan.notes
-- Update patterns[] with discovered approaches
-- Add relevant documentation links to implementation steps
+- Use `latestVersions` for dependency specifications
+- Reference `documentationLinks` in step descriptions
+- Add `deprecatedPatterns` warnings to relevant steps
+- Note `pitfalls` in plan.notes
+- Update patterns[] with discovered approaches from `codePatterns`
 
 ### Step 4: Create Implementation Plan
 Write to `.claude/$FEATURE_PREFIX/current-feature.json` with fields: `runId` (set after starting a run), `requirementId`, `phase: "planning"`, `sessionId`, `lastCheckpoint`, and `plan` containing `summary`, `filesToCreate`, `filesToModify`, `patterns`, and `steps` array (each step: `step`, `description`, `completed`, `completedAt`).

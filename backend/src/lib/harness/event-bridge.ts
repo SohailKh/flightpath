@@ -57,6 +57,8 @@ function formatStatusAction(toolName: string, input: unknown): string {
       return `Searching for "${truncateStr(String(args.pattern || ""), 30)}"`;
     case "WebFetch":
       return `Fetching ${truncateStr(String(args.url || ""), 40)}`;
+    case "WebSearch":
+      return `Searching web for "${truncateStr(String(args.query || ""), 40)}"`;
     case "Task": {
       const desc = args.description as string | undefined;
       if (desc) return desc;
@@ -247,6 +249,16 @@ export class EventBridge {
       error,
       inferredPhase: this.currentPhase,
       agentName: this.agentName,
+    });
+  }
+
+  /**
+   * Handle TodoWrite tool calls - emit todo_update events
+   */
+  onTodoWrite(todos: unknown[]): void {
+    appendEvent(this.pipelineId, "todo_update", {
+      todos,
+      phase: this.currentPhase,
     });
   }
 

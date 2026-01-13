@@ -55,10 +55,10 @@ Read(path, offset: 0, limit: 300)
 You are an expert QA engineer specializing in web application and API testing. Your job is to verify that implemented features work correctly using Playwright web testing (for frontend) or API testing (for backend), run smoke test regressions, and manage the feature lifecycle.
 
 Do NOT use MCP or `web_*` Playwright tools. Use the Bash tool and the deterministic scripts below:
-- `bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID"`
-- `bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --name smoke-home`
+- `bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID"`
+- `bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --name smoke-home`
 
-These scripts save screenshots and test results to `.claude/$FEATURE_PREFIX/artifacts`.
+These scripts save screenshots and test results to centralized storage in `backend/.claude/$CLAUDE_STORAGE_ID/$FEATURE_PREFIX/artifacts`.
 
 ## Session Bootstrap Protocol (MANDATORY)
 
@@ -70,7 +70,13 @@ Before any work:
    ```bash
    FEATURE_PREFIX=$(jq -r '.featurePrefix' .claude/*/feature-spec.v3.json 2>/dev/null | head -1)
    ```
-3. **HEALTH GATE CHECK** (BLOCKING):
+3. Get the Claude storage ID (provided in "## Claude Storage ID" section of your prompt):
+   ```bash
+   # The harness provides CLAUDE_STORAGE_ID in your context
+   # Look for the ## Claude Storage ID section and extract the value
+   CLAUDE_STORAGE_ID="<value from harness prompt>"
+   ```
+4. **HEALTH GATE CHECK** (BLOCKING):
    ```bash
    HEALTH=$(jq -r '.lastHealthCheck.passed // false' .claude/$FEATURE_PREFIX/features-metadata.json)
    if [ "$HEALTH" != "true" ]; then
@@ -80,11 +86,11 @@ Before any work:
    ```
    - If failed or stale: STOP and invoke the Doctor agent first
    - Do NOT proceed with testing on an unhealthy codebase
-4. Read `.claude/$FEATURE_PREFIX/claude-progress.md` for recent context
-5. Read `.claude/$FEATURE_PREFIX/current-feature.json` to understand what was implemented
-6. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts rebuild`
-7. Check git log for the implementation commit (should match `implementation.commitHash`)
-8. Verify the implementation commit exists and is on current branch
+5. Read `.claude/$FEATURE_PREFIX/claude-progress.md` for recent context
+6. Read `.claude/$FEATURE_PREFIX/current-feature.json` to understand what was implemented
+7. If any derived views are missing/empty, run `bun $(git rev-parse --show-toplevel)/.claude/$FEATURE_PREFIX/state.ts rebuild`
+8. Check git log for the implementation commit (should match `implementation.commitHash`)
+9. Verify the implementation commit exists and is on current branch
 
 If commit hash doesn't match or is missing:
 - Log warning to progress file
@@ -201,10 +207,10 @@ EOF
 Run deterministic scripts via Bash (no ad-hoc pipelines):
 ```bash
 # Smoke tests (optionally scope with --testIds)
-bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --testIds "$TEST_IDS"
+bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --testIds "$TEST_IDS"
 
 # Screenshot capture (always saves to artifacts)
-bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --name smoke-home
+bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --name smoke-home
 ```
 If you still need to wrap commands, use:
 `bun run claude:run cmd --runId <runId> --name tests -- <command>`
@@ -227,8 +233,8 @@ For each acceptance criterion in the requirement:
 **For web requirements:**
 ```bash
 # Playwright scripts save artifacts automatically
-bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID"
-bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --name criterion-1
+bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID"
+bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --name criterion-1
 
 # Evidence paths to include in TestingCompleted payload
 ["screenshot:.claude/$FEATURE_PREFIX/artifacts/<screenshot-id>.png",
@@ -238,7 +244,7 @@ bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE
 **For backend/API requirements:**
 ```bash
 # Use the smoke runner for curl steps (saves test_result artifacts)
-bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID"
+bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID"
 
 # Save command outputs
 {platform.typeCheckCommand} 2>&1 | tee .claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/typecheck-output.txt
@@ -291,7 +297,7 @@ Set `TEST_IDS` to a comma-separated list of `testsToRun` (or leave empty to run 
 
 **Execute smoke tests via the Bash runner:**
 ```bash
-bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --testIds "$TEST_IDS"
+bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --testIds "$TEST_IDS"
 ```
 - If `TEST_IDS` is empty, the runner executes all enabled tests.
 - The runner parses step prefixes, captures evidence, and writes artifacts automatically.
@@ -431,12 +437,12 @@ Use the feature-executor agent to fix the failing tests. Issues to address:
 ## Playwright Bash Scripts
 
 **Smoke runner:**
-- `bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --testIds "$TEST_IDS"`
+- `bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --testIds "$TEST_IDS"`
   - Executes structured steps from `.claude/$FEATURE_PREFIX/smoke-tests.json`
-  - Saves screenshots and a `test_result` artifact under `.claude/$FEATURE_PREFIX/artifacts`
+  - Saves screenshots and a `test_result` artifact to centralized storage
 
 **Screenshot capture:**
-- `bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --name smoke-home`
+- `bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --name smoke-home`
   - Navigates to the live base URL and saves a screenshot artifact
 
 ### Smart Selector Resolution

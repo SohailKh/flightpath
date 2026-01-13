@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { initBrowser, closeBrowser, navigate, screenshot, wait } from "../lib/playwright-tools";
 import { saveScreenshot, saveTestResult } from "../lib/artifacts";
+import { getClaudeFeaturePath, CLAUDE_STORAGE_ROOT } from "../lib/claude-paths";
 
 function parseArgs(args: string[]): Record<string, string> {
   const options: Record<string, string> = {};
@@ -28,9 +29,21 @@ function parseArgs(args: string[]): Record<string, string> {
   return options;
 }
 
-async function resolveFeaturePrefix(rootPath: string, explicit?: string): Promise<string> {
+/**
+ * Resolve the feature prefix
+ * Uses claudeStorageId if provided, otherwise falls back to projectPath
+ */
+async function resolveFeaturePrefix(
+  claudeStorageId: string | undefined,
+  projectPath: string,
+  explicit?: string
+): Promise<string> {
   if (explicit) return explicit;
-  const claudeDir = join(rootPath, ".claude");
+
+  const claudeDir = claudeStorageId
+    ? join(CLAUDE_STORAGE_ROOT, claudeStorageId)
+    : join(projectPath, ".claude");
+
   if (!existsSync(claudeDir)) return "pipeline";
   const entries = await readdir(claudeDir, { withFileTypes: true });
   const candidates = entries.filter(
@@ -45,18 +58,23 @@ async function resolveFeaturePrefix(rootPath: string, explicit?: string): Promis
   return candidates[0]?.name ?? "pipeline";
 }
 
+/**
+ * Resolve the run ID
+ * Uses claudeStorageId if provided, otherwise falls back to projectPath
+ */
 async function resolveRunId(
-  rootPath: string,
+  claudeStorageId: string | undefined,
+  projectPath: string,
   featurePrefix: string,
   explicit?: string
 ): Promise<string> {
   if (explicit) return explicit;
-  const currentFeaturePath = join(
-    rootPath,
-    ".claude",
-    featurePrefix,
-    "current-feature.json"
-  );
+
+  const claudeDir = claudeStorageId
+    ? getClaudeFeaturePath(claudeStorageId, featurePrefix)
+    : join(projectPath, ".claude", featurePrefix);
+
+  const currentFeaturePath = join(claudeDir, "current-feature.json");
   if (!existsSync(currentFeaturePath)) {
     return `manual-${Date.now()}`;
   }
@@ -82,11 +100,14 @@ if (!baseUrl) {
 }
 
 const projectPath = resolve(options.projectPath || process.cwd());
+const claudeStorageId = options.claudeStorageId || undefined;
+
 const featurePrefix = await resolveFeaturePrefix(
+  claudeStorageId,
   projectPath,
   options.featurePrefix
 );
-const runId = await resolveRunId(projectPath, featurePrefix, options.runId);
+const runId = await resolveRunId(claudeStorageId, projectPath, featurePrefix, options.runId);
 const waitMs = options.waitMs ? Number(options.waitMs) : 0;
 const name = options.name || "live-base";
 
@@ -114,7 +135,7 @@ try {
   const artifact = await saveScreenshot(
     buffer,
     undefined,
-    projectPath,
+    claudeStorageId,
     featurePrefix
   );
 
@@ -139,7 +160,7 @@ try {
       },
     },
     undefined,
-    projectPath,
+    claudeStorageId,
     featurePrefix
   );
 

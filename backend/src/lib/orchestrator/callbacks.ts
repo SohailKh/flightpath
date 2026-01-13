@@ -68,6 +68,12 @@ export function createToolCallbacks(
     onStatusUpdate: (action) => {
       appendEvent(pipelineId, "status_update", { action, phase, agentName, statusSource: "agent" });
     },
+    onTodoUpdate: (todos) => {
+      appendEvent(pipelineId, "todo_update", {
+        todos,
+        phase,
+      });
+    },
   };
 }
 

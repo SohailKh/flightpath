@@ -1,18 +1,46 @@
-import { useRef, useEffect, useState, useMemo } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import type {
   PipelineEvent,
   PipelinePhase,
   ToolEventData,
   StatusUpdateData,
-  TodoEventData,
-  TodoItem,
-  AgentResponseData,
   AgentPromptData,
   TokenUsageData,
 } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
+
+// ============================================================================
+// Data Structures for Tree View
+// ============================================================================
+
+interface AgentGroup {
+  id: string;
+  agentName: string;
+  label: string;
+  toolCount: number;
+  tokenCount: number;
+  totalCostUsd?: number;
+  status: "running" | "done" | "error";
+  events: ProcessedEvent[];
+}
+
+interface ProcessedEvent {
+  id: string;
+  type: "tool" | "status" | "phase";
+  toolName?: string;
+  primaryArg?: string;
+  result?: string;
+  durationMs?: number;
+  outcome?: "success" | "warning" | "error";
+}
+
+type DisplayItem =
+  | { kind: "agent-header"; group: AgentGroup }
+  | { kind: "agent-child"; group: AgentGroup; event: ProcessedEvent; isLast: boolean }
+  | { kind: "standalone-tool"; event: ProcessedEvent }
+  | { kind: "status"; content: string; id: string };
 
 interface ActivityStreamProps {
   events: PipelineEvent[];
@@ -58,10 +86,280 @@ function getInitialPrompt(event: PipelineEvent): string | null {
   return data.initialPrompt.trim() ? data.initialPrompt : null;
 }
 
+// ============================================================================
+// String Utilities
+// ============================================================================
+
+function truncatePath(path: string): string {
+  const parts = path.split("/");
+  return parts.length > 3 ? ".../" + parts.slice(-2).join("/") : path;
+}
+
+function truncateCmd(cmd: string): string {
+  return cmd.length > 40 ? cmd.slice(0, 37) + "..." : cmd;
+}
+
+// ============================================================================
+// Tool Result Formatting
+// ============================================================================
+
+function formatTokens(tokens: number): string {
+  if (tokens >= 1000) {
+    return `${(tokens / 1000).toFixed(1)}k`;
+  }
+  return tokens.toString();
+}
+
+function formatUsd(cost: number): string {
+  if (cost < 0.01) {
+    return `$${cost.toFixed(4)}`;
+  }
+  return `$${cost.toFixed(2)}`;
+}
+
+function formatToolResult(toolName: string, result: unknown, args?: Record<string, unknown>): string {
+  if (!result) return "Done";
+
+  const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+
+  if (toolName === "Read") {
+    // Count lines from result
+    const lines = resultStr.split("\n").length;
+    return `Read ${lines} lines`;
+  }
+  if (toolName === "Grep") {
+    // Count matches (files or content lines)
+    const matches = resultStr.split("\n").filter(Boolean).length;
+    return matches > 0 ? `Found ${matches} matches` : "No matches";
+  }
+  if (toolName === "Glob") {
+    const files = resultStr.split("\n").filter(Boolean).length;
+    return files > 0 ? `Found ${files} files` : "No files";
+  }
+  if (toolName === "Edit") return "Edit applied";
+  if (toolName === "Write") return "File written";
+  if (toolName === "Bash") {
+    // Show first line of output or "Completed"
+    const firstLine = resultStr.split("\n")[0]?.trim();
+    if (firstLine && firstLine.length < 50) return firstLine;
+    return "Completed";
+  }
+  if (toolName === "Task") {
+    // Parse agent task result
+    const match = resultStr.match(/(\d+)\s*tool\s*uses?/i);
+    const toolUses = match ? match[1] : "?";
+    return `${toolUses} tool uses`;
+  }
+  return "Done";
+}
+
+function extractPrimaryArg(toolName: string, args?: Record<string, unknown>): string {
+  if (!args) return "";
+
+  if (toolName === "Read" || toolName === "Write" || toolName === "Edit") {
+    const path = args.file_path || args.path;
+    return path ? truncatePath(String(path)) : "";
+  }
+  if (toolName === "Grep") {
+    return args.pattern ? String(args.pattern) : "";
+  }
+  if (toolName === "Glob") {
+    return args.pattern ? String(args.pattern) : "";
+  }
+  if (toolName === "Bash") {
+    const desc = args.description;
+    if (desc) return String(desc).slice(0, 40);
+    const cmd = args.command;
+    return cmd ? truncateCmd(String(cmd)) : "";
+  }
+  if (toolName === "Task") {
+    return args.description ? String(args.description).slice(0, 50) : "";
+  }
+  return "";
+}
+
+function extractAgentLabel(promptData: AgentPromptData): string {
+  // Try to extract a meaningful label from the prompt
+  const prompt = promptData.prompt;
+  if (!prompt) return promptData.agentName || "Agent";
+
+  // Look for common patterns in agent prompts
+  const firstLine = prompt.split("\n")[0]?.trim();
+  if (firstLine && firstLine.length < 60) {
+    return firstLine;
+  }
+
+  // Use requirement ID if available
+  if (promptData.requirementId) {
+    return `Task: ${promptData.requirementId}`;
+  }
+
+  return promptData.agentName || "Agent";
+}
+
+// ============================================================================
+// Event Grouping Logic
+// ============================================================================
+
+function groupEvents(events: PipelineEvent[], collapsedGroups: Set<string>): DisplayItem[] {
+  const items: DisplayItem[] = [];
+  const groups: AgentGroup[] = [];
+  let currentGroup: AgentGroup | null = null;
+
+  // Map to pair tool_started with tool_completed
+  const toolPairs = new Map<string, { started: PipelineEvent; completed?: PipelineEvent }>();
+
+  for (const event of events) {
+    const data = event.data as Record<string, unknown>;
+
+    // Start a new agent group on agent_prompt
+    if (event.type === "agent_prompt") {
+      // Finalize previous group
+      if (currentGroup) {
+        groups.push(currentGroup);
+      }
+
+      const promptData = data as unknown as AgentPromptData;
+      currentGroup = {
+        id: event.ts,
+        agentName: promptData.agentName || "unknown",
+        label: extractAgentLabel(promptData),
+        toolCount: 0,
+        tokenCount: 0,
+        totalCostUsd: undefined,
+        status: "running",
+        events: [],
+      };
+      continue;
+    }
+
+    // Track tool_started events
+    if (event.type === "tool_started") {
+      const toolData = data as unknown as ToolEventData;
+      if (toolData.toolUseId) {
+        toolPairs.set(toolData.toolUseId, { started: event });
+      }
+      continue;
+    }
+
+    // Process tool_completed events (merge with started)
+    if (event.type === "tool_completed") {
+      const toolData = data as unknown as ToolEventData;
+      const pair = toolData.toolUseId ? toolPairs.get(toolData.toolUseId) : undefined;
+      const startedData = pair?.started.data as unknown as ToolEventData | undefined;
+
+      const processed: ProcessedEvent = {
+        id: event.ts,
+        type: "tool",
+        toolName: toolData.toolName,
+        primaryArg: extractPrimaryArg(toolData.toolName || "", startedData?.args as Record<string, unknown>),
+        result: formatToolResult(toolData.toolName || "", toolData.result, startedData?.args as Record<string, unknown>),
+        durationMs: toolData.durationMs,
+        outcome: toolData.outcome as "success" | "warning" | "error" | undefined,
+      };
+
+      if (currentGroup) {
+        currentGroup.events.push(processed);
+        currentGroup.toolCount++;
+      } else {
+        items.push({ kind: "standalone-tool", event: processed });
+      }
+      continue;
+    }
+
+    // Process tool_error events
+    if (event.type === "tool_error") {
+      const toolData = data as unknown as ToolEventData;
+
+      const processed: ProcessedEvent = {
+        id: event.ts,
+        type: "tool",
+        toolName: toolData.toolName,
+        primaryArg: "",
+        result: toolData.error ? `Error: ${toolData.error}` : "Error",
+        outcome: "error",
+      };
+
+      if (currentGroup) {
+        currentGroup.events.push(processed);
+        currentGroup.status = "error";
+      } else {
+        items.push({ kind: "standalone-tool", event: processed });
+      }
+      continue;
+    }
+
+    // Token usage marks end of agent turn with stats
+    if (event.type === "token_usage") {
+      const tokenData = data as unknown as TokenUsageData;
+      if (currentGroup) {
+        currentGroup.tokenCount = (tokenData.inputTokens || 0) + (tokenData.outputTokens || 0);
+        currentGroup.totalCostUsd = tokenData.totalCostUsd;
+        currentGroup.status = "done";
+        groups.push(currentGroup);
+        currentGroup = null;
+      }
+      continue;
+    }
+
+    // Status updates become standalone items if no current group
+    if (event.type === "status_update") {
+      const statusData = data as unknown as StatusUpdateData;
+      if (statusData.action && !currentGroup) {
+        items.push({ kind: "status", content: statusData.action, id: event.ts });
+      }
+      continue;
+    }
+  }
+
+  // Finalize any remaining group
+  if (currentGroup) {
+    groups.push(currentGroup);
+  }
+
+  // Convert groups to display items
+  const result: DisplayItem[] = [];
+
+  for (const group of groups) {
+    result.push({ kind: "agent-header", group });
+
+    // Add children if not collapsed
+    if (!collapsedGroups.has(group.id)) {
+      group.events.forEach((event, index) => {
+        result.push({
+          kind: "agent-child",
+          group,
+          event,
+          isLast: index === group.events.length - 1,
+        });
+      });
+    }
+  }
+
+  // Add standalone items
+  result.push(...items);
+
+  return result;
+}
+
 export function ActivityStream({ events, maxItems = 100, currentPhase }: ActivityStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  // Toggle collapse state for a group
+  const toggleCollapse = useCallback((groupId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }, []);
 
   // Get the current status action
   const currentAction = useMemo(() => {
@@ -72,9 +370,6 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
     const completedEvents = events.filter((e) => e.type === "tool_completed");
     const lastCompleted = completedEvents[completedEvents.length - 1];
 
-    // If a tool_completed event occurred after the last status_update,
-    // the tool finished - show the default action (e.g. "Analyzing requirements...")
-    // which describes what the agent is doing while thinking
     if (lastCompleted && lastStatus) {
       const statusIndex = events.indexOf(lastStatus);
       const completedIndex = events.indexOf(lastCompleted);
@@ -119,61 +414,36 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
       .slice(-maxItems);
   }, [events, maxItems]);
 
-  // Deduplicate consecutive identical status_update events
-  const deduplicatedEvents = useMemo(() => {
-    const result: typeof activityEvents = [];
-    for (const event of activityEvents) {
-      const lastEvent = result[result.length - 1];
-      // Skip consecutive duplicate status_update events
-      if (
-        event.type === "status_update" &&
-        lastEvent?.type === "status_update" &&
-        "action" in event.data &&
-        "action" in lastEvent.data &&
-        (event.data as StatusUpdateData).action === (lastEvent.data as StatusUpdateData).action
-      ) {
-        // Replace with the newer event (keeps most recent timestamp)
-        result[result.length - 1] = event;
-        continue;
-      }
-      result.push(event);
-    }
-    return result;
-  }, [activityEvents]);
+  // Group events into tree structure
+  const displayItems = useMemo(() => {
+    return groupEvents(activityEvents, collapsedGroups);
+  }, [activityEvents, collapsedGroups]);
 
   // Apply text search filter
-  const filteredEvents = useMemo(() => {
-    if (!search.trim()) return deduplicatedEvents;
+  const filteredItems = useMemo(() => {
+    if (!search.trim()) return displayItems;
     const searchLower = search.toLowerCase();
-    return deduplicatedEvents.filter((event) => {
-      const data = event.data as unknown as ToolEventData;
-      const statusData = event.data as unknown as StatusUpdateData;
-      const agentData = event.data as unknown as AgentResponseData;
-      const initialPrompt = getInitialPrompt(event);
-      const promptData = event.data as unknown as AgentPromptData;
-      const searchableText = [
-        event.type,
-        data.toolName,
-        data.error,
-        (data.args as Record<string, unknown>)?.file_path,
-        (data.args as Record<string, unknown>)?.path,
-        (data.args as Record<string, unknown>)?.command,
-        statusData.action,
-        agentData.content,
-        promptData.prompt,
-        promptData.agentName,
-        promptData.requirementId,
-        promptData.explorerType,
-        initialPrompt,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return searchableText.includes(searchLower);
+    return displayItems.filter((item) => {
+      if (item.kind === "agent-header") {
+        return item.group.label.toLowerCase().includes(searchLower) ||
+               item.group.agentName.toLowerCase().includes(searchLower);
+      }
+      if (item.kind === "agent-child" || item.kind === "standalone-tool") {
+        const event = item.event;
+        return (
+          (event.toolName?.toLowerCase().includes(searchLower) ?? false) ||
+          (event.primaryArg?.toLowerCase().includes(searchLower) ?? false) ||
+          (event.result?.toLowerCase().includes(searchLower) ?? false)
+        );
+      }
+      if (item.kind === "status") {
+        return item.content.toLowerCase().includes(searchLower);
+      }
+      return false;
     });
-  }, [deduplicatedEvents, search]);
+  }, [displayItems, search]);
 
-  // Auto-scroll to bottom when new events arrive (not when filtering)
+  // Auto-scroll to bottom when new events arrive
   useEffect(() => {
     if (!search.trim()) {
       scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -201,17 +471,18 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
         />
       </CardHeader>
       <CardContent className="flex-1 overflow-y-auto p-0 min-h-0">
-        {filteredEvents.length === 0 ? (
+        {filteredItems.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             {search.trim() ? "No matching activities" : "Waiting for activity..."}
           </div>
         ) : (
-          <div className="font-mono text-xs">
-            {filteredEvents.map((event, i) => (
-              <ActivityItem
-                key={`${event.ts}-${i}`}
-                event={event}
-                nextTs={filteredEvents[i + 1]?.ts}
+          <div className="font-mono text-xs py-2">
+            {filteredItems.map((item, i) => (
+              <TreeItem
+                key={`${item.kind}-${i}`}
+                item={item}
+                onToggle={toggleCollapse}
+                isCollapsed={item.kind === "agent-header" ? collapsedGroups.has(item.group.id) : false}
               />
             ))}
             <div ref={scrollRef} />
@@ -240,279 +511,143 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
   );
 }
 
-// Phase badge colors for inline display
-const phaseBadgeColors: Record<PipelinePhase, string> = {
-  qa: "bg-yellow-100 text-yellow-700",
-  exploring: "bg-cyan-100 text-cyan-700",
-  planning: "bg-purple-100 text-purple-700",
-  executing: "bg-green-100 text-green-700",
-  testing: "bg-blue-100 text-blue-700",
-};
+// ============================================================================
+// Tree Rendering Components
+// ============================================================================
 
-// Agent label mapping for display
-const agentLabels: Record<string, string> = {
-  harness: "Harness",
-  "feature-qa": "QA",
-  "feature-planner": "Planner",
-  "feature-executor": "Executor",
-  "feature-tester": "Tester",
-  "feature-init": "Init",
-  "feature-doctor": "Doctor",
-  "feature-explorer": "Explorer",
-  "explorer-pattern": "Pattern",
-  "explorer-api": "API",
-  "explorer-test": "Test",
-};
-
-function formatAgentName(agentName: string): string {
-  return agentLabels[agentName] || agentName;
+interface TreeItemProps {
+  item: DisplayItem;
+  onToggle: (groupId: string) => void;
+  isCollapsed: boolean;
 }
 
-function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string }) {
-  const data = event.data as unknown as ToolEventData;
-  const statusData = event.data as unknown as StatusUpdateData;
-  const promptData = event.data as unknown as AgentPromptData;
-  const [showPrompt, setShowPrompt] = useState(false);
-  const time = new Date(event.ts).toLocaleTimeString("en-US", {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const initialPrompt = getInitialPrompt(event);
+function TreeItem({ item, onToggle, isCollapsed }: TreeItemProps) {
+  if (item.kind === "agent-header") {
+    return <AgentHeader group={item.group} onToggle={onToggle} isCollapsed={isCollapsed} />;
+  }
 
-  // Extract agent name from event data (available for tool and status events)
-  const agentName = data.agentName || statusData.agentName || promptData.agentName;
+  if (item.kind === "agent-child") {
+    return <ToolLine event={item.event} isLast={item.isLast} indented />;
+  }
 
-  // Calculate duration to next event
-  const durationToNext = nextTs
-    ? Math.round((new Date(nextTs).getTime() - new Date(event.ts).getTime()) / 1000)
-    : null;
+  if (item.kind === "standalone-tool") {
+    return <ToolLine event={item.event} isLast={true} indented={false} />;
+  }
 
-  const formatDuration = (seconds: number) => {
-    if (seconds >= 60) {
-      const mins = Math.floor(seconds / 60);
-      const secs = seconds % 60;
-      return `+${mins}m ${secs}s`;
-    }
-    return `+${seconds}s`;
-  };
-
-  const formatToolDuration = (ms: number) => {
-    if (ms >= 60000) {
-      const mins = Math.floor(ms / 60000);
-      const secs = Math.round((ms % 60000) / 1000);
-      return `${mins}m ${secs}s`;
-    }
-    if (ms >= 1000) {
-      return `${(ms / 1000).toFixed(1)}s`;
-    }
-    return `${ms}ms`;
-  };
-
-  const formatTokenCount = (tokens: number): string => {
-    if (tokens >= 1000) {
-      return `${(tokens / 1000).toFixed(1)}K`;
-    }
-    return tokens.toString();
-  };
-
-  const getIcon = () => {
-    if (event.type === "todo_update") return "\u2611"; // Ballot box with check
-    if (event.type === "agent_prompt") return "P";
-    if (event.type === "agent_response") return "\u{1F4AC}"; // Speech bubble
-    if (event.type === "token_usage") return "\u{1F4CA}"; // Bar chart
-    if (event.type === "tool_started") return ">";
-    if (event.type === "tool_completed") {
-      // Show warning icon if outcome indicates issues
-      if (data.outcome === "warning") return "⚠";
-      return "\u2713";
-    }
-    if (event.type === "tool_error") return "\u2717";
-    if (event.type === "status_update") return "\u25CF";
-    if (event.type.endsWith("_started")) return "\u25CB";
-    if (event.type.endsWith("_completed")) return "\u2713";
-    return "-";
-  };
-
-  const getColor = () => {
-    if (event.type === "todo_update") return "text-indigo-600";
-    if (event.type === "agent_prompt") return "text-amber-700 bg-amber-50";
-    if (event.type === "agent_response") return "text-purple-700 bg-purple-50";
-    if (event.type === "token_usage") return "text-teal-600 bg-teal-50";
-    if (event.type === "tool_error") return "text-red-600 bg-red-50";
-    if (event.type === "tool_completed") {
-      // Yellow/warning color if outcome has issues
-      if (data.outcome === "warning") return "text-amber-600";
-      return "text-green-700";
-    }
-    if (event.type === "tool_started") return "text-blue-600";
-    if (event.type === "status_update") return "text-slate-500";
-    if (event.type.endsWith("_completed")) return "text-green-600";
-    return "text-gray-600";
-  };
-
-  // Get full path for tooltip
-  const getFullPath = (): string | null => {
-    if (event.type !== "tool_started" || !data.toolName) return null;
-    const args = data.args as Record<string, unknown> | undefined;
-    const path = args?.file_path || args?.path;
-    return path ? String(path) : null;
-  };
-
-  const getMessage = () => {
-    if (initialPrompt) {
-      return `Initial prompt: ${initialPrompt}`;
-    }
-    if (event.type === "agent_response") {
-      const agentData = event.data as unknown as AgentResponseData;
-      return `Turn ${agentData.turnNumber}: ${agentData.content}`;
-    }
-    if (event.type === "token_usage") {
-      const tokenData = event.data as unknown as TokenUsageData;
-      return `Tokens: ${tokenData.inputTokens.toLocaleString()} in / ${tokenData.outputTokens.toLocaleString()} out (${tokenData.totalTurns} turns)`;
-    }
-    if (event.type === "todo_update") {
-      const todoData = event.data as unknown as TodoEventData;
-      const inProgress = todoData.todos.filter((t: TodoItem) => t.status === "in_progress");
-      const completed = todoData.todos.filter((t: TodoItem) => t.status === "completed");
-      // Show the currently active todo's activeForm, or progress summary
-      if (inProgress.length > 0) {
-        return inProgress[0].activeForm;
-      }
-      return `Tasks: ${completed.length}/${todoData.todos.length} done`;
-    }
-    if (event.type === "tool_started" && data.toolName) {
-      const args = data.args as Record<string, unknown> | undefined;
-      const path = args?.file_path || args?.path || "";
-      const cmd = args?.command;
-      if (path) return `${data.toolName} ${truncatePath(String(path))}`;
-      if (cmd) return `${data.toolName} ${truncateCmd(String(cmd))}`;
-      return data.toolName;
-    }
-    if (event.type === "tool_completed" && data.toolName) {
-      // Include duration in completed message
-      const duration = data.durationMs ? ` (${formatToolDuration(data.durationMs)})` : "";
-      // Include token usage if available
-      const hasTokens = data.inputTokens !== undefined || data.outputTokens !== undefined;
-      const tokenDisplay = hasTokens
-        ? ` [${formatTokenCount(data.inputTokens ?? 0)} in / ${formatTokenCount(data.outputTokens ?? 0)} out]`
-        : "";
-      return `${data.toolName} done${duration}${tokenDisplay}`;
-    }
-    if (event.type === "tool_error" && data.toolName) {
-      return `${data.toolName} failed: ${data.error}`;
-    }
-    if (event.type === "status_update") {
-      const statusData = event.data as unknown as StatusUpdateData;
-      return statusData.action || "Status update";
-    }
-    // Phase events
-    return event.type.replace(/_/g, " ");
-  };
-
-  const promptText = typeof promptData.prompt === "string" ? promptData.prompt : "";
-  const promptLabel = promptData.agentName ? `Prompt (${promptData.agentName})` : "Prompt";
-  const promptMeta = promptData.requirementId ? `Requirement: ${promptData.requirementId}` : null;
-
-  const fullPath = getFullPath();
-  const tooltip = fullPath || initialPrompt || undefined;
-  const phase = event.type === "agent_prompt" ? promptData.phase : data.phase;
-
-  // Agent responses and token usage get expanded display
-  const isExpandedType =
-    event.type === "agent_response" ||
-    event.type === "token_usage" ||
-    event.type === "agent_prompt";
-
-  if (event.type === "agent_prompt") {
+  if (item.kind === "status") {
     return (
-      <div
-        className={cn(
-          "flex items-start gap-2 px-3 border-b border-gray-100 hover:bg-gray-50",
-          "py-2",
-          getColor()
-        )}
-      >
-        <span className="text-gray-400 w-16 flex-shrink-0">{time}</span>
-        {phase && (
-          <span className={cn("text-[10px] px-1 rounded flex-shrink-0", phaseBadgeColors[phase])}>
-            {phaseLabels[phase]}
-          </span>
-        )}
-        {agentName && (
-          <span className="text-[10px] px-1 rounded flex-shrink-0 bg-slate-100 text-slate-600">
-            {formatAgentName(agentName)}
-          </span>
-        )}
-        <span className="w-4">{getIcon()}</span>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{promptLabel}</span>
-            {promptMeta && <span className="text-[10px] text-gray-500">{promptMeta}</span>}
-            {promptText && (
-              <button
-                type="button"
-                className="text-[10px] text-amber-700 hover:text-amber-800 underline underline-offset-2"
-                onClick={() => setShowPrompt((prev) => !prev)}
-              >
-                {showPrompt ? "Hide" : "View"}
-              </button>
-            )}
-          </div>
-          {showPrompt && promptText && (
-            <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-gray-700 bg-gray-50 border border-gray-200 rounded p-2">
-              {promptText}
-            </pre>
-          )}
-        </div>
-        {durationToNext !== null && (
-          <span className="text-gray-400 text-right flex-shrink-0 w-16">
-            {formatDuration(durationToNext)}
-          </span>
-        )}
+      <div className="px-3 py-1 text-gray-500">
+        <span className="text-gray-400 mr-2">●</span>
+        {item.content}
       </div>
     );
   }
 
+  return null;
+}
+
+interface AgentHeaderProps {
+  group: AgentGroup;
+  onToggle: (groupId: string) => void;
+  isCollapsed: boolean;
+}
+
+function AgentHeader({ group, onToggle, isCollapsed }: AgentHeaderProps) {
+  const statusColor = group.status === "done"
+    ? "text-green-600"
+    : group.status === "error"
+      ? "text-red-600"
+      : "text-blue-600";
+
+  const statusIcon = group.status === "done"
+    ? "●"
+    : group.status === "error"
+      ? "●"
+      : "○";
+
   return (
-    <div
-      className={cn(
-        "flex items-start gap-2 px-3 border-b border-gray-100 hover:bg-gray-50",
-        isExpandedType ? "py-2" : "py-1",
-        getColor()
-      )}
-      title={tooltip}
-    >
-      <span className="text-gray-400 w-16 flex-shrink-0">{time}</span>
-      {phase && (
-        <span className={cn("text-[10px] px-1 rounded flex-shrink-0", phaseBadgeColors[phase])}>
-          {phaseLabels[phase]}
+    <div className="px-3 py-1.5 hover:bg-gray-50">
+      {/* Main header line */}
+      <div
+        className="flex items-center cursor-pointer"
+        onClick={() => onToggle(group.id)}
+      >
+        <span className={cn("mr-2", statusColor)}>{statusIcon}</span>
+        <span className="font-semibold text-gray-900">{group.label}</span>
+        <span className="text-gray-400 mx-2">·</span>
+        <span className="text-gray-500">{group.toolCount} tool uses</span>
+        {group.tokenCount > 0 && (
+          <>
+            <span className="text-gray-400 mx-2">·</span>
+            <span className="text-gray-500">{formatTokens(group.tokenCount)} tokens</span>
+          </>
+        )}
+        {group.totalCostUsd !== undefined && (
+          <>
+            <span className="text-gray-400 mx-2">·</span>
+            <span className="text-gray-500">{formatUsd(group.totalCostUsd)}</span>
+          </>
+        )}
+        {isCollapsed && (
+          <span className="text-gray-400 ml-2 text-[10px]">(click to expand)</span>
+        )}
+      </div>
+      {/* Status line with tree connector */}
+      <div className="flex items-center text-gray-500 pl-4">
+        <span className="text-gray-300 mr-2">└</span>
+        <span className={cn(
+          "px-1.5 py-0.5 rounded text-[10px] font-medium",
+          group.status === "done"
+            ? "bg-green-100 text-green-700"
+            : group.status === "error"
+              ? "bg-red-100 text-red-700"
+              : "bg-blue-100 text-blue-700"
+        )}>
+          {group.status === "done" ? "Done" : group.status === "error" ? "Error" : "Running"}
         </span>
-      )}
-      {agentName && (
-        <span className="text-[10px] px-1 rounded flex-shrink-0 bg-slate-100 text-slate-600">
-          {formatAgentName(agentName)}
-        </span>
-      )}
-      <span className="w-4">{getIcon()}</span>
-      <span className={cn("flex-1", isExpandedType ? "whitespace-pre-wrap break-words" : "truncate")}>
-        {getMessage()}
-      </span>
-      {durationToNext !== null && (
-        <span className="text-gray-400 text-right flex-shrink-0 w-16">
-          {formatDuration(durationToNext)}
-        </span>
-      )}
+      </div>
     </div>
   );
 }
 
-function truncatePath(path: string): string {
-  const parts = path.split("/");
-  return parts.length > 3 ? ".../" + parts.slice(-2).join("/") : path;
+interface ToolLineProps {
+  event: ProcessedEvent;
+  isLast: boolean;
+  indented: boolean;
 }
 
-function truncateCmd(cmd: string): string {
-  return cmd.length > 40 ? cmd.slice(0, 37) + "..." : cmd;
+function ToolLine({ event, isLast, indented }: ToolLineProps) {
+  const outcomeColor = event.outcome === "error"
+    ? "text-red-600"
+    : event.outcome === "warning"
+      ? "text-amber-600"
+      : "text-gray-600";
+
+  return (
+    <div className={cn("px-3 py-1", indented && "pl-7")}>
+      {/* Tool name and arg */}
+      <div className="flex items-center">
+        {indented && <span className="text-gray-300 mr-2">{isLast ? "└" : "├"}</span>}
+        <span className="text-gray-400 mr-2">●</span>
+        <span className="font-semibold text-gray-800">{event.toolName}</span>
+        {event.primaryArg && (
+          <>
+            <span className="text-gray-400">(</span>
+            <span className="text-blue-600 underline underline-offset-2">{event.primaryArg}</span>
+            <span className="text-gray-400">)</span>
+          </>
+        )}
+      </div>
+      {/* Result line */}
+      <div className={cn("flex items-center pl-4", outcomeColor)}>
+        <span className="text-gray-300 mr-2">└</span>
+        <span>{event.result}</span>
+        {event.durationMs !== undefined && event.durationMs > 100 && (
+          <span className="text-gray-400 ml-2 text-[10px]">
+            ({event.durationMs >= 1000 ? `${(event.durationMs / 1000).toFixed(1)}s` : `${event.durationMs}ms`})
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }

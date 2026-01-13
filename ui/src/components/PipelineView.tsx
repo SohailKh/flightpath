@@ -179,8 +179,17 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
       {/* Error display */}
       {error && (
         <Card className="border-red-200 bg-red-50">
-          <CardContent className="py-3">
+          <CardContent className="py-3 flex items-center justify-between">
             <p className="text-red-800 text-sm">{error}</p>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-600 hover:text-red-800 ml-4"
+              aria-label="Dismiss error"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </CardContent>
         </Card>
       )}

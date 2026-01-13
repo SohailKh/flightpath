@@ -395,9 +395,11 @@ export function ResponseLog({
       // Token usage
       else if (event.type === "token_usage") {
         const data = event.data as TokenUsageData;
+        const costLabel =
+          data.totalCostUsd !== undefined ? ` • $${data.totalCostUsd.toFixed(4)}` : "";
         entries.push({
           type: "token",
-          content: `Tokens: ${data.inputTokens.toLocaleString()} in / ${data.outputTokens.toLocaleString()} out`,
+          content: `Tokens: ${data.inputTokens.toLocaleString()} in / ${data.outputTokens.toLocaleString()} out${costLabel}`,
           timestamp: event.ts,
           inputTokens: data.inputTokens,
           outputTokens: data.outputTokens,
@@ -812,6 +814,11 @@ function ToolEntry({ entry }: { entry: LogEntry }) {
   const isError = entry.subtype === "error";
   const isPlanning = entry.subtype === "planning";
   const isCompleted = entry.subtype === "completed";
+
+  // Skip TodoWrite tool entries entirely - they're shown via TodoEntry from todo_update events
+  if (entry.toolName === "TodoWrite") {
+    return null;
+  }
 
   const bgColor = isError
     ? "bg-red-50 border-red-200"

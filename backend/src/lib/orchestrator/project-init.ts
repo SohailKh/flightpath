@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { type Requirement, type Epic } from "../pipeline";
+import { getClaudeFeaturePath } from "../claude-paths";
 
 const execAsync = promisify(exec);
 
@@ -82,18 +83,25 @@ export function getProjectPipelinePath(featurePrefix: string): string {
 
 /**
  * Initialize the target project directory and copy feature spec
+ *
+ * Creates the .claude directory in backend/.claude/{claudeStorageId}/{featurePrefix}/
+ * NOT in the target project - keeping the target project clean.
  */
 export async function initializeTargetProject(
   targetPath: string,
+  claudeStorageId: string,
   featurePrefix: string = "pipeline",
   sourceRoot?: string
 ): Promise<void> {
   const { mkdir, copyFile } = await import("node:fs/promises");
   const { existsSync } = await import("node:fs");
 
-  // Create target directory structure using feature prefix
-  const claudeDir = join(targetPath, ".claude", featurePrefix);
+  // Create .claude directory in BACKEND (not in target project)
+  const claudeDir = getClaudeFeaturePath(claudeStorageId, featurePrefix);
   await mkdir(claudeDir, { recursive: true });
+
+  // Create target directory WITHOUT .claude
+  await mkdir(targetPath, { recursive: true });
 
   // Initialize git repository so agent commits go to the right place
   await execAsync("git init", { cwd: targetPath });
@@ -102,7 +110,7 @@ export async function initializeTargetProject(
   const targetSpec = join(claudeDir, "feature-spec.v3.json");
 
   if (!existsSync(targetSpec)) {
-    // Copy feature spec from source root to target project if needed
+    // Copy feature spec from source root to backend .claude storage
     const specRoot = sourceRoot ? resolve(sourceRoot) : FLIGHTPATH_ROOT;
     const sourceSpec = join(specRoot, ".claude", featurePrefix, "feature-spec.v3.json");
 

@@ -1,14 +1,17 @@
 /**
  * Artifact storage for pipeline outputs.
  * Saves screenshots, test results, and diffs to local filesystem.
+ * All artifacts are stored in backend/.claude/{claudeStorageId}/{featurePrefix}/artifacts/
  */
 
 import { mkdir, writeFile, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { getArtifactsPath, CLAUDE_STORAGE_ROOT } from "./claude-paths";
 
 /**
  * Get the artifacts base directory path for a given feature prefix
+ * @deprecated Use getArtifactsPath from claude-paths.ts instead
  */
 function getArtifactsBasePath(featurePrefix: string): string {
   return `.claude/${featurePrefix}/artifacts`;
@@ -26,12 +29,15 @@ export interface SavedArtifact {
 
 /**
  * Get the artifacts directory
- * Uses targetProjectPath if provided, otherwise falls back to process.cwd()
- * featurePrefix defaults to "pipeline" for backward compatibility
+ * Uses claudeStorageId to determine the path in backend/.claude/
+ * Falls back to a "default" storage location if no claudeStorageId is provided
  */
-function getArtifactsDir(targetProjectPath?: string, featurePrefix: string = "pipeline"): string {
-  const baseDir = targetProjectPath || process.cwd();
-  return join(baseDir, getArtifactsBasePath(featurePrefix));
+function getArtifactsDir(claudeStorageId?: string, featurePrefix: string = "pipeline"): string {
+  if (!claudeStorageId) {
+    // Fallback for backward compatibility during transition
+    return join(CLAUDE_STORAGE_ROOT, "default", featurePrefix, "artifacts");
+  }
+  return getArtifactsPath(claudeStorageId, featurePrefix);
 }
 
 /**
@@ -72,10 +78,10 @@ function getExtension(type: ArtifactType): string {
  */
 async function countArtifacts(
   type: ArtifactType,
-  targetProjectPath?: string,
+  claudeStorageId?: string,
   featurePrefix: string = "pipeline"
 ): Promise<number> {
-  const dir = getArtifactsDir(targetProjectPath, featurePrefix);
+  const dir = getArtifactsDir(claudeStorageId, featurePrefix);
   if (!existsSync(dir)) return 0;
 
   const files = await readdir(dir);
@@ -89,13 +95,13 @@ export async function saveArtifact(
   type: ArtifactType,
   data: Buffer | string,
   requirementId?: string,
-  targetProjectPath?: string,
+  claudeStorageId?: string,
   featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact> {
-  const dir = getArtifactsDir(targetProjectPath, featurePrefix);
+  const dir = getArtifactsDir(claudeStorageId, featurePrefix);
   await ensureDir(dir);
 
-  const count = await countArtifacts(type, targetProjectPath, featurePrefix);
+  const count = await countArtifacts(type, claudeStorageId, featurePrefix);
   const id = generateArtifactId(type, count + 1);
   const ext = getExtension(type);
   const filename = `${id}${ext}`;
@@ -124,14 +130,14 @@ export async function saveArtifact(
 export async function saveScreenshot(
   imageData: Buffer,
   requirementId?: string,
-  targetProjectPath?: string,
+  claudeStorageId?: string,
   featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact> {
   return saveArtifact(
     "screenshot",
     imageData,
     requirementId,
-    targetProjectPath,
+    claudeStorageId,
     featurePrefix
   );
 }
@@ -142,7 +148,7 @@ export async function saveScreenshot(
 export async function saveTestResult(
   result: Record<string, unknown>,
   requirementId?: string,
-  targetProjectPath?: string,
+  claudeStorageId?: string,
   featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact> {
   const jsonData = JSON.stringify(result, null, 2);
@@ -150,7 +156,7 @@ export async function saveTestResult(
     "test_result",
     jsonData,
     requirementId,
-    targetProjectPath,
+    claudeStorageId,
     featurePrefix
   );
 }
@@ -161,14 +167,14 @@ export async function saveTestResult(
 export async function saveDiff(
   diffContent: string,
   requirementId?: string,
-  targetProjectPath?: string,
+  claudeStorageId?: string,
   featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact> {
   return saveArtifact(
     "diff",
     diffContent,
     requirementId,
-    targetProjectPath,
+    claudeStorageId,
     featurePrefix
   );
 }
@@ -178,10 +184,10 @@ export async function saveDiff(
  */
 export async function getArtifact(
   artifactId: string,
-  targetProjectPath?: string,
+  claudeStorageId?: string,
   featurePrefix: string = "pipeline"
 ): Promise<Buffer | null> {
-  const dir = getArtifactsDir(targetProjectPath, featurePrefix);
+  const dir = getArtifactsDir(claudeStorageId, featurePrefix);
   if (!existsSync(dir)) return null;
 
   const files = await readdir(dir);
@@ -196,10 +202,10 @@ export async function getArtifact(
  * List all artifacts
  */
 export async function listArtifacts(
-  targetProjectPath?: string,
+  claudeStorageId?: string,
   featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact[]> {
-  const dir = getArtifactsDir(targetProjectPath, featurePrefix);
+  const dir = getArtifactsDir(claudeStorageId, featurePrefix);
   if (!existsSync(dir)) return [];
 
   const files = await readdir(dir);

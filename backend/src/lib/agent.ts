@@ -29,7 +29,8 @@ export type AgentName =
   | "feature-explorer"
   | "explorer-pattern"
   | "explorer-api"
-  | "explorer-test";
+  | "explorer-test"
+  | "research-web";
 
 /**
  * Message format for conversation history
@@ -47,6 +48,7 @@ export interface ToolEventCallbacks {
   onToolComplete?: (toolName: string, toolInput: unknown, toolUseId: string, result: unknown, durationMs: number) => void;
   onToolError?: (toolName: string, toolInput: unknown, toolUseId: string, error: string) => void;
   onStatusUpdate?: (action: string) => void;
+  onTodoUpdate?: (todos: unknown[]) => void;
 }
 
 /**
@@ -207,6 +209,8 @@ function formatStatusAction(toolName: string, input: unknown): string {
       return `Searching for "${truncateStr(String(args.pattern || ""), 30)}"`;
     case "WebFetch":
       return `Fetching ${truncateStr(String(args.url || ""), 40)}`;
+    case "WebSearch":
+      return `Searching web for "${truncateStr(String(args.query || ""), 40)}"`;
     case "Task": {
       const desc = args.description as string | undefined;
       if (desc) return desc;
@@ -252,6 +256,10 @@ function mapModelName(shortName?: string): string | undefined {
 /**
  * Creates an agent runner for a specific pipeline agent with full configuration.
  * Supports multi-turn conversations and streaming.
+ *
+ * @deprecated Use createV2Session from session.ts instead for new code.
+ * This V1 implementation is kept for backwards compatibility with harness.ts
+ * and parallel-explorer.ts which may still use it.
  */
 export async function createPipelineAgent(
   options: AgentWithPromptOptions
@@ -593,6 +601,10 @@ When writing files (like feature-spec.v3.json), use this as the base path.
 
 /**
  * Run a pipeline agent with a user message (for multi-turn QA)
+ *
+ * @deprecated Use V2Session.send() from session.ts instead.
+ * QA phase has been migrated to V2 sessions which handle conversation
+ * history automatically.
  */
 export async function runPipelineAgentWithMessage(
   agentName: AgentName,
@@ -635,6 +647,10 @@ export interface PlaywrightAgentOptions {
 
 /**
  * Run a pipeline agent with just a prompt (for starting a phase)
+ *
+ * @deprecated Use createV2Session from session.ts instead.
+ * This function is kept for backwards compatibility with parallel-explorer.ts
+ * which may still use it.
  */
 export async function runPipelineAgent(
   agentName: AgentName,

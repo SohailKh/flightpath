@@ -27,7 +27,7 @@ import {
   listArtifacts,
   getContentType,
 } from "./lib/artifacts";
-import { FLIGHTPATH_ROOT } from "./lib/orchestrator/project-init";
+// FLIGHTPATH_ROOT import removed - artifacts now use centralized storage via claudeStorageId
 import { analyzeFlow } from "./lib/flow-analyzer";
 
 type Bindings = {
@@ -404,13 +404,9 @@ app.get("/api/pipelines/:id/artifacts", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  const artifactsRoot = pipeline.isNewProject
-    ? pipeline.targetProjectPath || FLIGHTPATH_ROOT
-    : pipeline.featurePrefix
-    ? FLIGHTPATH_ROOT
-    : pipeline.targetProjectPath;
+  // Use claudeStorageId for centralized artifact storage in backend/.claude/
   const artifactsPrefix = pipeline.featurePrefix || "pipeline";
-  const artifacts = await listArtifacts(artifactsRoot, artifactsPrefix);
+  const artifacts = await listArtifacts(pipeline.claudeStorageId, artifactsPrefix);
   return c.json({ artifacts });
 });
 
@@ -424,13 +420,9 @@ app.get("/api/pipelines/:id/artifacts/:artifactId", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  const artifactsRoot = pipeline.isNewProject
-    ? pipeline.targetProjectPath || FLIGHTPATH_ROOT
-    : pipeline.featurePrefix
-    ? FLIGHTPATH_ROOT
-    : pipeline.targetProjectPath;
+  // Use claudeStorageId for centralized artifact storage in backend/.claude/
   const artifactsPrefix = pipeline.featurePrefix || "pipeline";
-  const data = await getArtifact(artifactId, artifactsRoot, artifactsPrefix);
+  const data = await getArtifact(artifactId, pipeline.claudeStorageId, artifactsPrefix);
   if (!data) {
     return c.json({ error: "Artifact not found" }, 404);
   }

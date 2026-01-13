@@ -1,7 +1,8 @@
 /**
- * QA Phase
+ * QA Phase (V2 Sessions)
  *
  * Interactive user interview to gather feature requirements.
+ * Uses V2 Claude Agent SDK sessions for cleaner multi-turn conversation management.
  */
 
 import { existsSync, unlinkSync, readdirSync } from "node:fs";
@@ -17,14 +18,14 @@ import {
   setTargetProjectPath,
   setFeaturePrefix,
   setIsNewProject,
+  setClaudeStorageId,
+  setSessionId,
+  getSessionId,
   markRunning,
   markStopped,
 } from "../pipeline";
-import {
-  runPipelineAgent,
-  runPipelineAgentWithMessage,
-  type PipelineAgentResult,
-} from "../agent";
+import { generateClaudeStorageId } from "../claude-paths";
+import { createV2Session, resumeV2Session, type V2Session, type V2SessionTurnResult } from "../session";
 import { createToolCallbacks, emitTodoEvents } from "./callbacks";
 import { LOG, logPhase } from "./utils";
 import {
@@ -33,8 +34,12 @@ import {
   generateTargetProjectPath,
   generateStagingProjectPath,
   initializeTargetProject,
+  sanitizeProjectName,
 } from "./project-init";
 import { runHarness } from "../harness";
+
+// Store active sessions in memory (keyed by pipelineId)
+const activeSessions = new Map<string, V2Session>();
 
 /**
  * Clear any existing feature spec files to prevent contamination
@@ -61,6 +66,97 @@ async function clearFeatureSpecs(rootPath?: string): Promise<void> {
   } catch {
     // Ignore errors
   }
+}
+
+/**
+ * Get or create a V2 session for the pipeline
+ */
+async function getOrCreateSession(
+  pipelineId: string,
+  targetProjectPath?: string,
+  isNewProject?: boolean
+): Promise<V2Session> {
+  // Check if we have an active session in memory
+  let session = activeSessions.get(pipelineId);
+  if (session) {
+    return session;
+  }
+
+  // Check if pipeline has a stored session ID (for resume after restart)
+  const existingSessionId = getSessionId(pipelineId);
+
+  const toolCallbacks = createToolCallbacks(pipelineId, "qa", "feature-qa");
+
+  if (existingSessionId) {
+    // Resume existing session
+    console.log(`[QA] Resuming existing session ${existingSessionId.slice(0, 8)}...`);
+    session = await resumeV2Session(existingSessionId, {
+      agentName: "feature-qa",
+      targetProjectPath,
+      isNewProject,
+      toolCallbacks,
+      modelOverride: "opus",
+      maxTurns: 50,
+    });
+    appendEvent(pipelineId, "status_update", {
+      action: `Resumed QA session ${existingSessionId.slice(0, 8)}... (cwd: ${
+        session.cwd || "default"
+      })`,
+      phase: "qa",
+      statusSource: "system",
+    });
+  } else {
+    // Create new session
+    session = await createV2Session({
+      agentName: "feature-qa",
+      targetProjectPath,
+      isNewProject,
+      toolCallbacks,
+      modelOverride: "opus",
+      maxTurns: 50,
+    });
+    appendEvent(pipelineId, "status_update", {
+      action: `Created QA session (cwd: ${session.cwd || "default"})`,
+      phase: "qa",
+      statusSource: "system",
+    });
+  }
+
+  activeSessions.set(pipelineId, session);
+  return session;
+}
+
+/**
+ * Process session result and emit events
+ */
+function processSessionResult(
+  pipelineId: string,
+  result: V2SessionTurnResult
+): void {
+  // Store session ID in pipeline for resume capability
+  if (result.sessionId) {
+    const previousSessionId = getSessionId(pipelineId);
+    if (result.sessionId !== previousSessionId) {
+      setSessionId(pipelineId, result.sessionId);
+      appendEvent(pipelineId, "status_update", {
+        action: `Session ID set: ${result.sessionId.slice(0, 8)}...`,
+        phase: "qa",
+        statusSource: "system",
+      });
+    }
+  }
+
+  if (result.usage) {
+    appendEvent(pipelineId, "token_usage", {
+      inputTokens: result.usage.input_tokens ?? 0,
+      outputTokens: result.usage.output_tokens ?? 0,
+      totalTurns: result.totalTurns ?? 0,
+      ...(result.totalCostUsd !== undefined && { totalCostUsd: result.totalCostUsd }),
+    });
+  }
+
+  // Emit todo events if structured output contains todos
+  emitTodoEvents(pipelineId, "qa", result.structuredOutput);
 }
 
 /**
@@ -96,49 +192,32 @@ export async function runQAPhase(
   appendEvent(pipelineId, "qa_started", { initialPrompt });
   updatePhase(pipelineId, { current: "qa" });
 
-  // Start the QA agent with the initial prompt
-  const onStreamChunk = (chunk: string) => {
-    appendEvent(pipelineId, "agent_message", { content: chunk, streaming: true });
-  };
-
-  // Create tool callbacks for verbose logging
-  const toolCallbacks = createToolCallbacks(pipelineId, "qa", "feature-qa");
-
   try {
-    logPhase("qa", "Starting QA agent", initialPrompt.slice(0, 100));
+    logPhase("qa", "Starting QA agent (V2 session)", initialPrompt.slice(0, 100));
     appendEvent(pipelineId, "status_update", {
       action: "Starting feature discovery...",
       phase: "qa",
       statusSource: "orchestrator",
     });
 
-    const emitPrompt = (prompt: string) => {
-      appendEvent(pipelineId, "agent_prompt", {
-        prompt,
-        agentName: "feature-qa",
-        phase: "qa",
-      });
-    };
+    // Get or create V2 session
+    const session = await getOrCreateSession(pipelineId, resolvedTargetPath, isNewProject);
 
-    const result = await runPipelineAgent(
-      "feature-qa",
-      initialPrompt,
-      onStreamChunk,
-      resolvedTargetPath,
-      50,
-      toolCallbacks,
-      undefined,
-      undefined,
-      emitPrompt,
-      isNewProject
-    );
+    // Emit system prompt for debugging
+    appendEvent(pipelineId, "agent_prompt", {
+      prompt: session.systemPrompt,
+      agentName: "feature-qa",
+      phase: "qa",
+    });
 
-    // Emit todo events if agent returned todos in structured output
-    emitTodoEvents(pipelineId, "qa", result.structuredOutput);
+    // Send initial prompt
+    const result = await session.send(initialPrompt);
 
+    // Process result
+    processSessionResult(pipelineId, result);
     logPhase("qa", "Agent responded", result.reply.slice(0, 100));
 
-    // Store conversation history
+    // Store conversation history (for backwards compatibility with existing code)
     addToConversation(pipelineId, "user", initialPrompt);
     addToConversation(pipelineId, "assistant", result.reply);
 
@@ -147,28 +226,27 @@ export async function runQAPhase(
       content: result.reply,
       streaming: false,
       requiresUserInput: result.requiresUserInput,
-      userQuestion: result.userQuestion,
       userQuestions: result.userQuestions,
     });
 
     // If agent needs user input, pause and wait for message
     if (result.requiresUserInput) {
-      // Pipeline will continue when user sends a message via handleUserMessage
-      // Mark as stopped since we're waiting for user input
       markStopped(pipelineId);
       return;
     }
 
     // Check if QA is complete (agent should have written feature-spec.v3.json)
-    if (isQAComplete(result, resolvedTargetPath)) {
-      // Note: onQAComplete calls runHarness which has its own markRunning
+    const completionRoot = session.cwd || resolvedTargetPath;
+    if (isQAComplete(result, completionRoot)) {
       markStopped(pipelineId);
+      await cleanupSession(pipelineId);
       await onQAComplete(pipelineId, result);
     } else {
       markStopped(pipelineId);
     }
   } catch (error) {
     markStopped(pipelineId);
+    await cleanupSession(pipelineId);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`[Pipeline ${pipelineId}] QA phase failed:`, errorMessage);
     if (error instanceof Error && error.stack) {
@@ -206,48 +284,31 @@ export async function handleUserMessage(
   appendEvent(pipelineId, "user_message", { content: message });
   addToConversation(pipelineId, "user", message);
 
-  const onStreamChunk = (chunk: string) => {
-    appendEvent(pipelineId, "agent_message", { content: chunk, streaming: true });
-  };
-
-  const toolCallbacks = createToolCallbacks(pipelineId, "qa", "feature-qa");
-
   try {
-    logPhase("qa", "Continuing QA with user message", message.slice(0, 50));
-    console.log(`[QA Debug] Conversation history length: ${pipeline.conversationHistory.length}`);
-    // Count user messages to show progress (each user message = 1 exchange)
+    logPhase("qa", "Continuing QA with user message (V2 session)", message.slice(0, 50));
+
+    // Count user messages to show progress
     const exchangeCount = pipeline.conversationHistory.filter(m => m.role === "user").length;
-    // Provide immediate feedback that the agent is working
     appendEvent(pipelineId, "status_update", {
       action: `Processing response ${exchangeCount} (this may take a few minutes if generating requirements)...`,
       phase: "qa",
       statusSource: "orchestrator",
     });
 
-    console.log(`[QA Debug] Calling runPipelineAgentWithMessage...`);
-    const emitPrompt = (prompt: string) => {
-      appendEvent(pipelineId, "agent_prompt", {
-        prompt,
-        agentName: "feature-qa",
-        phase: "qa",
-      });
-    };
-
-    const result = await runPipelineAgentWithMessage(
-      "feature-qa",
-      message,
-      pipeline.conversationHistory,
-      onStreamChunk,
+    // Get existing session (should exist from runQAPhase or previous message)
+    const session = await getOrCreateSession(
+      pipelineId,
       pipeline.targetProjectPath,
-      50,
-      toolCallbacks,
-      emitPrompt,
       pipeline.isNewProject ?? false
     );
-    console.log(`[QA Debug] runPipelineAgentWithMessage returned, requiresUserInput=${result.requiresUserInput}`);
 
-    // Emit todo events if agent returned todos in structured output
-    emitTodoEvents(pipelineId, "qa", result.structuredOutput);
+    // Send message - V2 session automatically maintains conversation history
+    console.log(`[QA Debug] Sending message via V2 session...`);
+    const result = await session.send(message);
+    console.log(`[QA Debug] V2 session.send() returned, requiresUserInput=${result.requiresUserInput}`);
+
+    // Process result
+    processSessionResult(pipelineId, result);
 
     addToConversation(pipelineId, "assistant", result.reply);
 
@@ -255,14 +316,14 @@ export async function handleUserMessage(
       content: result.reply,
       streaming: false,
       requiresUserInput: result.requiresUserInput,
-      userQuestion: result.userQuestion,
       userQuestions: result.userQuestions,
     });
 
     // Check if QA is complete
-    if (isQAComplete(result, pipeline.targetProjectPath)) {
-      // Note: onQAComplete calls runHarness which has its own markRunning
+    const completionRoot = session.cwd || pipeline.targetProjectPath;
+    if (isQAComplete(result, completionRoot)) {
       markStopped(pipelineId);
+      await cleanupSession(pipelineId);
       await onQAComplete(pipelineId, result);
     } else {
       // Waiting for more user input
@@ -270,11 +331,27 @@ export async function handleUserMessage(
     }
   } catch (error) {
     markStopped(pipelineId);
+    await cleanupSession(pipelineId);
     appendEvent(pipelineId, "pipeline_failed", {
       phase: "qa",
       error: error instanceof Error ? error.message : "Unknown error",
     });
     updateStatus(pipelineId, "failed");
+  }
+}
+
+/**
+ * Cleanup session resources
+ */
+async function cleanupSession(pipelineId: string): Promise<void> {
+  const session = activeSessions.get(pipelineId);
+  if (session) {
+    try {
+      await session.close();
+    } catch {
+      // Ignore cleanup errors
+    }
+    activeSessions.delete(pipelineId);
   }
 }
 
@@ -309,7 +386,7 @@ function findExistingSpecPathAtRoot(rootPath: string): string | null {
  * Check if QA phase is complete
  * Uses file-based detection for reliability instead of string matching.
  */
-function isQAComplete(result: PipelineAgentResult, rootPath?: string): boolean {
+function isQAComplete(result: V2SessionTurnResult, rootPath?: string): boolean {
   // Primary: Check if agent wrote to the spec file via tool calls
   const wroteSpecFile = result.toolCalls?.some(
     (call) =>
@@ -339,7 +416,7 @@ function isQAComplete(result: PipelineAgentResult, rootPath?: string): boolean {
  */
 async function onQAComplete(
   pipelineId: string,
-  _result: PipelineAgentResult
+  _result: V2SessionTurnResult
 ): Promise<void> {
   const pipeline = getPipeline(pipelineId);
 
@@ -363,6 +440,11 @@ async function onQAComplete(
     updateStatus(pipelineId, "failed");
     return;
   }
+
+  // Generate and set the unique claudeStorageId for this pipeline
+  const sanitizedName = sanitizeProjectName(projectName);
+  const claudeStorageId = generateClaudeStorageId(sanitizedName, pipelineId);
+  setClaudeStorageId(pipelineId, claudeStorageId);
 
   if (featurePrefix) {
     setFeaturePrefix(pipelineId, featurePrefix);
@@ -394,8 +476,8 @@ async function onQAComplete(
 
   setTargetProjectPath(pipelineId, targetPath);
 
-  // Create target directory and copy feature spec
-  await initializeTargetProject(targetPath, featurePrefix, specRoot);
+  // Create target directory (WITHOUT .claude) and copy feature spec to backend/.claude storage
+  await initializeTargetProject(targetPath, claudeStorageId, featurePrefix, specRoot);
 
   appendEvent(pipelineId, "target_project_set", {
     projectName,

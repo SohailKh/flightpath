@@ -68,7 +68,8 @@ function buildPrompt(
   requirements: Requirement[],
   targetProjectPath: string,
   enablePlaywright: boolean,
-  featurePrefix: string
+  featurePrefix: string,
+  claudeStorageId: string
 ): string {
   let prompt = ""
 
@@ -91,6 +92,11 @@ function buildPrompt(
 
   // Add working directory
   prompt += `## Working Directory\n\n\`${targetProjectPath}\`\n\n`;
+
+  // Add Claude storage ID for artifact storage
+  prompt += `## Claude Storage ID\n\n\`${claudeStorageId}\`\n\n`;
+  prompt += `Use this ID when running playwright scripts:\n`;
+  prompt += `\`\`\`bash\nCLAUDE_STORAGE_ID="${claudeStorageId}"\n\`\`\`\n\n`;
 
   // Add Claude logs context
   prompt += "## Claude Logs\n\n";
@@ -200,7 +206,8 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
       requirements,
       targetProjectPath,
       enablePlaywright,
-      resolvedFeaturePrefix
+      resolvedFeaturePrefix,
+      pipeline.claudeStorageId || "default"
     );
     appendEvent(pipelineId, "agent_prompt", {
       prompt: fullPrompt,
@@ -254,6 +261,14 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
                       continue: true,
                       tool_result: result,
                     };
+                  }
+
+                  // Handle TodoWrite for real-time updates
+                  if (toolName === "TodoWrite") {
+                    const todoInput = toolInput as { todos?: unknown[] };
+                    if (todoInput?.todos) {
+                      eventBridge.onTodoWrite(todoInput.todos);
+                    }
                   }
 
                   // Handle Playwright tools
@@ -435,6 +450,7 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
               inputTokens: result.usage.input_tokens ?? 0,
               outputTokens: result.usage.output_tokens ?? 0,
               totalTurns,
+              ...(result.total_cost_usd !== undefined && { totalCostUsd: result.total_cost_usd }),
             });
             console.log(`[Harness] Emitted token_usage event: ${result.usage.input_tokens} in / ${result.usage.output_tokens} out`);
           }

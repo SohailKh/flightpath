@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { initBrowser, closeBrowser, screenshot } from "../lib/playwright-tools";
 import { executeStepsWithSummary } from "../lib/playwright-step-executor";
 import { saveScreenshot, saveTestResult } from "../lib/artifacts";
+import { getClaudeFeaturePath, CLAUDE_STORAGE_ROOT } from "../lib/claude-paths";
 
 type SmokeTest = {
   id: string;
@@ -55,9 +56,23 @@ function parseArgs(args: string[]): Record<string, string> {
   return options;
 }
 
-async function resolveFeaturePrefix(rootPath: string, explicit?: string): Promise<string> {
+/**
+ * Resolve the feature prefix
+ * If claudeStorageId is provided, looks in backend/.claude/{claudeStorageId}/
+ * Otherwise falls back to projectPath/.claude/ (legacy behavior)
+ */
+async function resolveFeaturePrefix(
+  claudeStorageId: string | undefined,
+  projectPath: string,
+  explicit?: string
+): Promise<string> {
   if (explicit) return explicit;
-  const claudeDir = join(rootPath, ".claude");
+
+  // Determine the base .claude directory to search
+  const claudeDir = claudeStorageId
+    ? join(CLAUDE_STORAGE_ROOT, claudeStorageId)
+    : join(projectPath, ".claude");
+
   if (!existsSync(claudeDir)) return "pipeline";
   const entries = await readdir(claudeDir, { withFileTypes: true });
   const candidates = entries.filter(
@@ -73,18 +88,23 @@ async function resolveFeaturePrefix(rootPath: string, explicit?: string): Promis
   return candidates[0]?.name ?? "pipeline";
 }
 
+/**
+ * Resolve the run ID
+ * Uses claudeStorageId if provided, otherwise falls back to projectPath
+ */
 async function resolveRunId(
-  rootPath: string,
+  claudeStorageId: string | undefined,
+  projectPath: string,
   featurePrefix: string,
   explicit?: string
 ): Promise<string> {
   if (explicit) return explicit;
-  const currentFeaturePath = join(
-    rootPath,
-    ".claude",
-    featurePrefix,
-    "current-feature.json"
-  );
+
+  const claudeDir = claudeStorageId
+    ? getClaudeFeaturePath(claudeStorageId, featurePrefix)
+    : join(projectPath, ".claude", featurePrefix);
+
+  const currentFeaturePath = join(claudeDir, "current-feature.json");
   if (!existsSync(currentFeaturePath)) {
     return `manual-${Date.now()}`;
   }
@@ -98,16 +118,20 @@ async function resolveRunId(
   return `manual-${Date.now()}`;
 }
 
+/**
+ * Load the dependency index
+ * Uses claudeStorageId if provided, otherwise falls back to projectPath
+ */
 async function loadDependencyIndex(
-  rootPath: string,
+  claudeStorageId: string | undefined,
+  projectPath: string,
   featurePrefix: string
 ): Promise<Record<string, string> | null> {
-  const indexPath = join(
-    rootPath,
-    ".claude",
-    featurePrefix,
-    "dependency-index.json"
-  );
+  const claudeDir = claudeStorageId
+    ? getClaudeFeaturePath(claudeStorageId, featurePrefix)
+    : join(projectPath, ".claude", featurePrefix);
+
+  const indexPath = join(claudeDir, "dependency-index.json");
   if (!existsSync(indexPath)) return null;
   try {
     const content = await readFile(indexPath, "utf-8");
@@ -146,18 +170,19 @@ if (!baseUrl) {
 }
 
 const projectPath = resolve(options.projectPath || process.cwd());
+const claudeStorageId = options.claudeStorageId || undefined;
+
 const featurePrefix = await resolveFeaturePrefix(
+  claudeStorageId,
   projectPath,
   options.featurePrefix
 );
-const runId = await resolveRunId(projectPath, featurePrefix, options.runId);
+const runId = await resolveRunId(claudeStorageId, projectPath, featurePrefix, options.runId);
 
-const smokePath = join(
-  projectPath,
-  ".claude",
-  featurePrefix,
-  "smoke-tests.json"
-);
+// Determine the path to smoke-tests.json using centralized storage
+const smokePath = claudeStorageId
+  ? join(getClaudeFeaturePath(claudeStorageId, featurePrefix), "smoke-tests.json")
+  : join(projectPath, ".claude", featurePrefix, "smoke-tests.json");
 
 if (!existsSync(smokePath)) {
   console.log(`Smoke tests not configured at ${smokePath}.`);
@@ -182,7 +207,7 @@ if (selectedTests.length === 0) {
   process.exit(0);
 }
 
-const dependencyIndex = await loadDependencyIndex(projectPath, featurePrefix);
+const dependencyIndex = await loadDependencyIndex(claudeStorageId, projectPath, featurePrefix);
 const startedAt = new Date().toISOString();
 const results: SmokeTestResult[] = [];
 let hasFailures = false;
@@ -232,7 +257,7 @@ try {
         const artifact = await saveScreenshot(
           buffer,
           undefined,
-          projectPath,
+          claudeStorageId,
           featurePrefix
         );
         evidence.push(`screenshot:${artifact.path}`);
@@ -285,7 +310,7 @@ const testResultArtifact = await saveTestResult(
     results,
   },
   undefined,
-  projectPath,
+  claudeStorageId,
   featurePrefix
 );
 

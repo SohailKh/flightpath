@@ -136,6 +136,7 @@ export interface TokenUsageData {
   inputTokens: number;
   outputTokens: number;
   totalTurns: number;
+  totalCostUsd?: number;
 }
 
 // SDK content block data types
