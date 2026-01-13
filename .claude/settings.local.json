@@ -30,7 +30,8 @@
       "Bash(bun -e:*)",
       "Bash(npm run dev:bun:*)",
       "Bash(tsc:*)",
-      "Bash(npx bun --version)"
+      "Bash(npx bun --version)",
+      "Bash(git add:*)"
     ]
   }
 }
