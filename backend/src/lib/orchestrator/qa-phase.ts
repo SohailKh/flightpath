@@ -5,7 +5,7 @@
  */
 
 import { existsSync, unlinkSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   getPipeline,
   updatePhase,
@@ -16,6 +16,7 @@ import {
   appendEvent,
   setTargetProjectPath,
   setFeaturePrefix,
+  setIsNewProject,
   markRunning,
   markStopped,
 } from "../pipeline";
@@ -30,6 +31,7 @@ import {
   FLIGHTPATH_ROOT,
   parseRequirementsFromSpec,
   generateTargetProjectPath,
+  generateStagingProjectPath,
   initializeTargetProject,
 } from "./project-init";
 import { runHarness } from "../harness";
@@ -38,10 +40,11 @@ import { runHarness } from "../harness";
  * Clear any existing feature spec files to prevent contamination
  * from previous pipelines.
  */
-async function clearFeatureSpecs(): Promise<void> {
+async function clearFeatureSpecs(rootPath?: string): Promise<void> {
   const { readdir } = await import("node:fs/promises");
 
-  const claudeDir = join(FLIGHTPATH_ROOT, ".claude");
+  const claudeRoot = rootPath ? resolve(rootPath) : FLIGHTPATH_ROOT;
+  const claudeDir = join(claudeRoot, ".claude");
   if (!existsSync(claudeDir)) return;
 
   try {
@@ -72,10 +75,24 @@ export async function runQAPhase(
   const pipeline = getPipeline(pipelineId);
   if (!pipeline) return;
 
+  let resolvedTargetPath = targetProjectPath || pipeline.targetProjectPath;
+  let isNewProject = pipeline.isNewProject ?? false;
+
+  if (!resolvedTargetPath) {
+    const { mkdir } = await import("node:fs/promises");
+    resolvedTargetPath = generateStagingProjectPath(pipelineId);
+    await mkdir(resolvedTargetPath, { recursive: true });
+    setTargetProjectPath(pipelineId, resolvedTargetPath);
+    setIsNewProject(pipelineId, true);
+    isNewProject = true;
+  }
+
   markRunning(pipelineId);
 
   console.log(`${LOG.qa} Starting QA phase for pipeline ${pipelineId.slice(0, 8)}`);
-  await clearFeatureSpecs();
+  if (isNewProject) {
+    await clearFeatureSpecs(resolvedTargetPath);
+  }
   appendEvent(pipelineId, "qa_started", { initialPrompt });
   updatePhase(pipelineId, { current: "qa" });
 
@@ -85,11 +102,15 @@ export async function runQAPhase(
   };
 
   // Create tool callbacks for verbose logging
-  const toolCallbacks = createToolCallbacks(pipelineId, "qa");
+  const toolCallbacks = createToolCallbacks(pipelineId, "qa", "feature-qa");
 
   try {
     logPhase("qa", "Starting QA agent", initialPrompt.slice(0, 100));
-    appendEvent(pipelineId, "status_update", { action: "Starting feature discovery...", phase: "qa" });
+    appendEvent(pipelineId, "status_update", {
+      action: "Starting feature discovery...",
+      phase: "qa",
+      statusSource: "orchestrator",
+    });
 
     const emitPrompt = (prompt: string) => {
       appendEvent(pipelineId, "agent_prompt", {
@@ -103,12 +124,13 @@ export async function runQAPhase(
       "feature-qa",
       initialPrompt,
       onStreamChunk,
-      targetProjectPath,
+      resolvedTargetPath,
       50,
       toolCallbacks,
       undefined,
       undefined,
-      emitPrompt
+      emitPrompt,
+      isNewProject
     );
 
     // Emit todo events if agent returned todos in structured output
@@ -138,7 +160,7 @@ export async function runQAPhase(
     }
 
     // Check if QA is complete (agent should have written feature-spec.v3.json)
-    if (isQAComplete(result)) {
+    if (isQAComplete(result, resolvedTargetPath)) {
       // Note: onQAComplete calls runHarness which has its own markRunning
       markStopped(pipelineId);
       await onQAComplete(pipelineId, result);
@@ -188,7 +210,7 @@ export async function handleUserMessage(
     appendEvent(pipelineId, "agent_message", { content: chunk, streaming: true });
   };
 
-  const toolCallbacks = createToolCallbacks(pipelineId, "qa");
+  const toolCallbacks = createToolCallbacks(pipelineId, "qa", "feature-qa");
 
   try {
     logPhase("qa", "Continuing QA with user message", message.slice(0, 50));
@@ -198,7 +220,8 @@ export async function handleUserMessage(
     // Provide immediate feedback that the agent is working
     appendEvent(pipelineId, "status_update", {
       action: `Processing response ${exchangeCount} (this may take a few minutes if generating requirements)...`,
-      phase: "qa"
+      phase: "qa",
+      statusSource: "orchestrator",
     });
 
     console.log(`[QA Debug] Calling runPipelineAgentWithMessage...`);
@@ -218,7 +241,8 @@ export async function handleUserMessage(
       pipeline.targetProjectPath,
       50,
       toolCallbacks,
-      emitPrompt
+      emitPrompt,
+      pipeline.isNewProject ?? false
     );
     console.log(`[QA Debug] runPipelineAgentWithMessage returned, requiresUserInput=${result.requiresUserInput}`);
 
@@ -236,7 +260,7 @@ export async function handleUserMessage(
     });
 
     // Check if QA is complete
-    if (isQAComplete(result)) {
+    if (isQAComplete(result, pipeline.targetProjectPath)) {
       // Note: onQAComplete calls runHarness which has its own markRunning
       markStopped(pipelineId);
       await onQAComplete(pipelineId, result);
@@ -258,7 +282,11 @@ export async function handleUserMessage(
  * Find if any feature spec file exists in .claude/{prefix}/ folders
  */
 function findExistingSpecPath(): string | null {
-  const claudeDir = join(FLIGHTPATH_ROOT, ".claude");
+  return findExistingSpecPathAtRoot(FLIGHTPATH_ROOT);
+}
+
+function findExistingSpecPathAtRoot(rootPath: string): string | null {
+  const claudeDir = join(resolve(rootPath), ".claude");
   if (!existsSync(claudeDir)) return null;
 
   try {
@@ -281,7 +309,7 @@ function findExistingSpecPath(): string | null {
  * Check if QA phase is complete
  * Uses file-based detection for reliability instead of string matching.
  */
-function isQAComplete(result: PipelineAgentResult): boolean {
+function isQAComplete(result: PipelineAgentResult, rootPath?: string): boolean {
   // Primary: Check if agent wrote to the spec file via tool calls
   const wroteSpecFile = result.toolCalls?.some(
     (call) =>
@@ -295,7 +323,7 @@ function isQAComplete(result: PipelineAgentResult): boolean {
   }
 
   // Fallback: Check actual file existence in any .claude/{prefix}/ folder
-  const specPath = findExistingSpecPath();
+  const specPath = rootPath ? findExistingSpecPathAtRoot(rootPath) : findExistingSpecPath();
 
   if (specPath) {
     console.log(`${LOG.qa} Checking completion... result=true (spec file exists at ${specPath})`);
@@ -313,13 +341,18 @@ async function onQAComplete(
   pipelineId: string,
   _result: PipelineAgentResult
 ): Promise<void> {
+  const pipeline = getPipeline(pipelineId);
+
   appendEvent(pipelineId, "qa_completed", {});
   appendEvent(pipelineId, "requirements_ready", {
     message: "Requirements have been generated",
   });
 
   // Parse requirements, epics, project name, and feature prefix from the feature spec
-  const { requirements, epics, projectName, featurePrefix } = await parseRequirementsFromSpec();
+  const specRoot = pipeline?.targetProjectPath;
+  const { requirements, epics, projectName, featurePrefix } = await parseRequirementsFromSpec(
+    specRoot
+  );
 
   console.log(`${LOG.qa} Complete. Found ${requirements.length} requirements, ${epics.length} epics, project: ${projectName}, prefix: ${featurePrefix}`);
 
@@ -335,12 +368,34 @@ async function onQAComplete(
     setFeaturePrefix(pipelineId, featurePrefix);
   }
 
-  // Generate and set the target project path
-  const targetPath = generateTargetProjectPath(projectName);
+  let targetPath = specRoot || generateTargetProjectPath(projectName);
+  const desiredPath = generateTargetProjectPath(projectName);
+
+  if (pipeline?.isNewProject && specRoot && specRoot !== desiredPath) {
+    try {
+      const { rename, mkdir } = await import("node:fs/promises");
+      if (!existsSync(desiredPath)) {
+        await mkdir(dirname(desiredPath), { recursive: true });
+        await rename(specRoot, desiredPath);
+        targetPath = desiredPath;
+        console.log(`[QA] Moved project directory: ${specRoot} -> ${desiredPath}`);
+      } else {
+        console.warn(`[QA] Target project path already exists: ${desiredPath}. Keeping ${specRoot}.`);
+      }
+    } catch (error) {
+      console.warn(
+        `[QA] Failed to move project directory from ${specRoot} to ${desiredPath}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  } else if (!specRoot) {
+    targetPath = desiredPath;
+  }
+
   setTargetProjectPath(pipelineId, targetPath);
 
   // Create target directory and copy feature spec
-  await initializeTargetProject(targetPath, featurePrefix);
+  await initializeTargetProject(targetPath, featurePrefix, specRoot);
 
   appendEvent(pipelineId, "target_project_set", {
     projectName,

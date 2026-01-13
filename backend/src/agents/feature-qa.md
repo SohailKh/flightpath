@@ -113,6 +113,39 @@ Identify what's needed to automate smoke tests:
 - Seed data scripts for test users/data
 - Mock/stub configurations for external services
 
+### Phase 2.6: Technology Research (When Needed)
+
+If the feature involves technologies, libraries, or patterns you're uncertain about, spawn a research subagent before finalizing requirements.
+
+**When to research:**
+- User mentions unfamiliar libraries or frameworks
+- Feature requires API integration with external services
+- You need current best practices for specific patterns (auth, caching, payments, etc.)
+- Platform-specific implementation approaches are unclear
+- You want to verify your assumptions about a technology
+
+**How to research:**
+Use the Task tool with `subagent_type="general-purpose"`:
+
+```
+Task tool parameters:
+  subagent_type: "general-purpose"
+  description: "Research [topic]"
+  prompt: "Search the web to find:
+    - Current best practices for [specific pattern/technology]
+    - Official documentation for [library/service]
+    - Common pitfalls and recommended approaches
+    - Version compatibility considerations
+
+    Summarize your findings with specific, actionable recommendations."
+```
+
+**Incorporate findings:**
+- Update requirements with discovered constraints or dependencies
+- Add notes about recommended libraries/versions
+- Include links to authoritative documentation in requirement notes
+- Adjust acceptance criteria based on discovered best practices
+
 ### Phase 3: Requirement Generation
 Break the feature into atomic requirements following these guidelines:
 

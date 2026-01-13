@@ -66,6 +66,14 @@ export function generateTargetProjectPath(projectName: string): string {
 }
 
 /**
+ * Generate a staging project path for new pipelines before feature name is known
+ */
+export function generateStagingProjectPath(pipelineId: string): string {
+  const sanitized = sanitizeProjectName(`fp-staging-${pipelineId}`);
+  return join(homedir(), FLIGHTPATH_PROJECTS_DIR, sanitized);
+}
+
+/**
  * Get the pipeline directory path for a given feature prefix
  */
 export function getProjectPipelinePath(featurePrefix: string): string {
@@ -75,7 +83,11 @@ export function getProjectPipelinePath(featurePrefix: string): string {
 /**
  * Initialize the target project directory and copy feature spec
  */
-export async function initializeTargetProject(targetPath: string, featurePrefix: string): Promise<void> {
+export async function initializeTargetProject(
+  targetPath: string,
+  featurePrefix: string = "pipeline",
+  sourceRoot?: string
+): Promise<void> {
   const { mkdir, copyFile } = await import("node:fs/promises");
   const { existsSync } = await import("node:fs");
 
@@ -87,16 +99,19 @@ export async function initializeTargetProject(targetPath: string, featurePrefix:
   await execAsync("git init", { cwd: targetPath });
   console.log(`[Orchestrator] Initialized git repository at ${targetPath}`);
 
-  // Copy feature spec from flightpath to target project
-  // Source: look in any .claude/{prefix}/ folder for feature-spec.v3.json
-  const sourceSpec = join(FLIGHTPATH_ROOT, ".claude", featurePrefix, "feature-spec.v3.json");
   const targetSpec = join(claudeDir, "feature-spec.v3.json");
 
-  if (existsSync(sourceSpec)) {
-    await copyFile(sourceSpec, targetSpec);
-    console.log(`[Orchestrator] Copied feature spec to ${targetSpec}`);
-  } else {
-    console.warn(`[Orchestrator] Feature spec not found at ${sourceSpec}`);
+  if (!existsSync(targetSpec)) {
+    // Copy feature spec from source root to target project if needed
+    const specRoot = sourceRoot ? resolve(sourceRoot) : FLIGHTPATH_ROOT;
+    const sourceSpec = join(specRoot, ".claude", featurePrefix, "feature-spec.v3.json");
+
+    if (existsSync(sourceSpec)) {
+      await copyFile(sourceSpec, targetSpec);
+      console.log(`[Orchestrator] Copied feature spec to ${targetSpec}`);
+    } else {
+      console.warn(`[Orchestrator] Feature spec not found at ${sourceSpec}`);
+    }
   }
 }
 
@@ -110,11 +125,12 @@ export interface ParsedFeatureSpec {
 /**
  * Find the feature spec file in any .claude/{prefix}/ folder
  */
-async function findFeatureSpecPath(): Promise<string | null> {
+async function findFeatureSpecPath(rootPath?: string): Promise<string | null> {
   const { readdir } = await import("node:fs/promises");
   const { existsSync } = await import("node:fs");
 
-  const claudeDir = join(FLIGHTPATH_ROOT, ".claude");
+  const baseRoot = rootPath ? resolve(rootPath) : FLIGHTPATH_ROOT;
+  const claudeDir = join(baseRoot, ".claude");
   if (!existsSync(claudeDir)) return null;
 
   try {
@@ -136,11 +152,13 @@ async function findFeatureSpecPath(): Promise<string | null> {
 /**
  * Parse requirements, epics, and project name from the feature spec file
  */
-export async function parseRequirementsFromSpec(): Promise<ParsedFeatureSpec> {
+export async function parseRequirementsFromSpec(
+  rootPath?: string
+): Promise<ParsedFeatureSpec> {
   try {
     const { readFile } = await import("node:fs/promises");
 
-    const specPath = await findFeatureSpecPath();
+    const specPath = await findFeatureSpecPath(rootPath);
 
     if (!specPath) {
       console.warn("Feature spec not found in any .claude/{prefix}/ folder");

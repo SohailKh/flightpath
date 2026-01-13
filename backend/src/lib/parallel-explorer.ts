@@ -18,6 +18,7 @@ import {
   selectModelForPlanning,
 } from "./model-selector";
 import { appendEvent } from "./pipeline";
+import { createToolCallbacks } from "./orchestrator/callbacks";
 
 // Error types for better retry logic
 export type ExplorerErrorType = "configuration" | "authentication" | "model" | "transient" | "unknown";
@@ -223,11 +224,14 @@ async function runSingleExplorer(
   explorerType: ExplorerType,
   requirement: Requirement,
   targetProjectPath: string | undefined,
-  toolCallbacks?: ToolEventCallbacks,
+  _toolCallbacks?: ToolEventCallbacks,
   timeoutMs: number = 60000
 ): Promise<ExplorerResult> {
   const startTime = Date.now();
   const agentName = EXPLORER_AGENTS[explorerType];
+
+  // Create agent-specific callbacks for this explorer
+  const explorerCallbacks = createToolCallbacks(pipelineId, "exploring", agentName);
 
   const prompt = buildExplorerPrompt(explorerType, requirement);
 
@@ -254,7 +258,7 @@ async function runSingleExplorer(
         undefined, // No streaming for parallel explorers
         targetProjectPath,
         20, // Max turns - explorers need room to properly explore codebases
-        toolCallbacks,
+        explorerCallbacks,
         undefined,
         undefined,
         emitPrompt

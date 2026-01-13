@@ -5,9 +5,6 @@
  * Maps step prefix syntax to Playwright actions.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
 import {
   navigate,
   click,
@@ -20,6 +17,7 @@ import {
   httpRequest,
 } from "./playwright-tools";
 import { parseStep } from "./playwright-selector";
+import { saveScreenshot, saveArtifact } from "./artifacts";
 import type {
   StepExecutionResult,
   ParsedStep,
@@ -28,62 +26,35 @@ import type {
 } from "./playwright-types";
 
 /**
- * Get evidence directory for a run
- */
-function getEvidenceDir(runId: string, projectPath?: string): string {
-  const base = projectPath || process.cwd();
-  return join(base, ".claude", "features", "runs", runId, "evidence");
-}
-
-/**
- * Ensure evidence directory exists
- */
-async function ensureEvidenceDir(runId: string, projectPath?: string): Promise<string> {
-  const dir = getEvidenceDir(runId, projectPath);
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
-  }
-  return dir;
-}
-
-/**
- * Save screenshot evidence
+ * Save screenshot evidence to artifacts folder
  */
 async function saveScreenshotEvidence(
   buffer: Buffer,
   name: string,
-  runId: string,
-  projectPath?: string
+  projectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<Evidence> {
-  const dir = await ensureEvidenceDir(runId, projectPath);
-  const filename = `${name.replace(/[^a-zA-Z0-9-_]/g, "-")}.png`;
-  const filepath = join(dir, filename);
-  await writeFile(filepath, buffer);
-
+  const artifact = await saveScreenshot(buffer, undefined, projectPath, featurePrefix);
   return {
     type: "screenshot",
-    path: `.claude/features/runs/${runId}/evidence/${filename}`,
+    path: artifact.path,
     description: `Screenshot: ${name}`,
   };
 }
 
 /**
- * Save API response evidence
+ * Save API response evidence to artifacts folder
  */
 async function saveApiResponseEvidence(
   response: string,
   name: string,
-  runId: string,
-  projectPath?: string
+  projectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<Evidence> {
-  const dir = await ensureEvidenceDir(runId, projectPath);
-  const filename = `${name.replace(/[^a-zA-Z0-9-_]/g, "-")}.json`;
-  const filepath = join(dir, filename);
-  await writeFile(filepath, response);
-
+  const artifact = await saveArtifact("test_result", response, undefined, projectPath, featurePrefix);
   return {
     type: "api-response",
-    path: `.claude/features/runs/${runId}/evidence/${filename}`,
+    path: artifact.path,
     description: `API Response: ${name}`,
   };
 }
@@ -93,9 +64,9 @@ async function saveApiResponseEvidence(
  */
 async function executeParsedStep(
   parsed: ParsedStep,
-  runId: string,
   stepIndex: number,
-  projectPath?: string
+  projectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<{ result: PlaywrightActionResult; evidence?: Evidence }> {
   let result: PlaywrightActionResult;
   let evidence: Evidence | undefined;
@@ -112,6 +83,10 @@ async function executeParsedStep(
         break;
       }
       result = await navigate(parsed.url);
+      break;
+    }
+    case "launchApp": {
+      result = await navigate("/");
       break;
     }
 
@@ -133,8 +108,8 @@ async function executeParsedStep(
         evidence = await saveScreenshotEvidence(
           result.screenshot,
           `step-${stepIndex}-click`,
-          runId,
-          projectPath
+          projectPath,
+          featurePrefix
         );
       }
       break;
@@ -186,8 +161,8 @@ async function executeParsedStep(
         evidence = await saveScreenshotEvidence(
           assertResult.screenshot,
           `step-${stepIndex}-assertVisible`,
-          runId,
-          projectPath
+          projectPath,
+          featurePrefix
         );
       }
       break;
@@ -214,8 +189,8 @@ async function executeParsedStep(
       evidence = await saveScreenshotEvidence(
         screenshotBuf,
         name,
-        runId,
-        projectPath
+        projectPath,
+        featurePrefix
       );
 
       result = {
@@ -262,8 +237,8 @@ async function executeParsedStep(
         evidence = await saveApiResponseEvidence(
           httpResult.responseBody,
           `step-${stepIndex}-api`,
-          runId,
-          projectPath
+          projectPath,
+          featurePrefix
         );
       }
       break;
@@ -285,16 +260,16 @@ async function executeParsedStep(
  * Execute a single smoke test step
  *
  * @param step - Raw step string (e.g., "tap:testId=submit-btn")
- * @param runId - Run ID for evidence storage
  * @param stepIndex - Index in the step sequence
  * @param projectPath - Optional project root path
+ * @param featurePrefix - Feature prefix for artifact storage (default: "pipeline")
  * @returns Step execution result with evidence
  */
 export async function executeStep(
   step: string,
-  runId: string,
   stepIndex: number,
-  projectPath?: string
+  projectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<StepExecutionResult> {
   // Parse the step
   const parsed = parseStep(step);
@@ -305,9 +280,9 @@ export async function executeStep(
   // Execute the parsed step
   const { result, evidence } = await executeParsedStep(
     parsed,
-    runId,
     stepIndex,
-    projectPath
+    projectPath,
+    featurePrefix
   );
 
   return {
@@ -323,22 +298,22 @@ export async function executeStep(
  * Execute a sequence of smoke test steps
  *
  * @param steps - Array of step strings
- * @param runId - Run ID for evidence storage
  * @param projectPath - Optional project root path
+ * @param featurePrefix - Feature prefix for artifact storage (default: "pipeline")
  * @param onStepComplete - Optional callback after each step
  * @returns Array of step execution results
  */
 export async function executeSteps(
   steps: string[],
-  runId: string,
   projectPath?: string,
+  featurePrefix: string = "pipeline",
   onStepComplete?: (result: StepExecutionResult) => void
 ): Promise<StepExecutionResult[]> {
   const results: StepExecutionResult[] = [];
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const result = await executeStep(step, runId, i, projectPath);
+    const result = await executeStep(step, i, projectPath, featurePrefix);
     results.push(result);
 
     // Notify callback
@@ -358,8 +333,8 @@ export async function executeSteps(
  */
 export async function executeStepsWithSummary(
   steps: string[],
-  runId: string,
-  projectPath?: string
+  projectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<{
   passed: boolean;
   results: StepExecutionResult[];
@@ -367,7 +342,7 @@ export async function executeStepsWithSummary(
   evidence: Evidence[];
   summary: string;
 }> {
-  const results = await executeSteps(steps, runId, projectPath);
+  const results = await executeSteps(steps, projectPath, featurePrefix);
 
   const evidence: Evidence[] = results
     .filter((r) => r.evidence)

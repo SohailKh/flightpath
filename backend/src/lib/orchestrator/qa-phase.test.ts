@@ -6,6 +6,7 @@ let pipeline: {
   phase: { current: string };
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
   targetProjectPath?: string;
+  isNewProject?: boolean;
 } | undefined;
 
 const getPipeline = jest.fn(() => pipeline);
@@ -14,6 +15,7 @@ const updateStatus = jest.fn();
 const setRequirements = jest.fn();
 const setEpics = jest.fn();
 const setTargetProjectPath = jest.fn();
+const setIsNewProject = jest.fn();
 const setFeaturePrefix = jest.fn();
 const appendEvent = jest.fn();
 const addToConversation = jest.fn((_, role, content) => {
@@ -38,6 +40,7 @@ const parseRequirementsFromSpec = jest.fn(async () => ({
   featurePrefix: parsedFeaturePrefix,
 }));
 const generateTargetProjectPath = jest.fn(() => "/target/path");
+const generateStagingProjectPath = jest.fn(() => "/staging/path");
 const initializeTargetProject = jest.fn(async () => {});
 const FLIGHTPATH_ROOT = "/fake/root";
 
@@ -54,6 +57,7 @@ mock.module("../pipeline", () => ({
   setEpics,
   setTargetProjectPath,
   setFeaturePrefix,
+  setIsNewProject,
   addToConversation,
   appendEvent,
 }));
@@ -72,6 +76,7 @@ mock.module("./project-init", () => ({
   FLIGHTPATH_ROOT,
   parseRequirementsFromSpec,
   generateTargetProjectPath,
+  generateStagingProjectPath,
   initializeTargetProject,
 }));
 
@@ -85,6 +90,7 @@ beforeEach(() => {
     phase: { current: "qa" },
     conversationHistory: [],
     targetProjectPath: "/project/path",
+    isNewProject: false,
   };
   parsedRequirements = [];
   parsedEpics = [];
@@ -146,10 +152,14 @@ describe("runQAPhase", () => {
 
     await runQAPhase("pipe-1", "hello");
 
-    expect(parseRequirementsFromSpec).toHaveBeenCalled();
+    expect(parseRequirementsFromSpec).toHaveBeenCalledWith("/project/path");
     expect(setFeaturePrefix).toHaveBeenCalledWith("pipe-1", parsedFeaturePrefix);
-    expect(setTargetProjectPath).toHaveBeenCalledWith("pipe-1", "/target/path");
-    expect(initializeTargetProject).toHaveBeenCalledWith("/target/path");
+    expect(setTargetProjectPath).toHaveBeenCalledWith("pipe-1", "/project/path");
+    expect(initializeTargetProject).toHaveBeenCalledWith(
+      "/project/path",
+      parsedFeaturePrefix,
+      "/project/path"
+    );
     expect(setRequirements).toHaveBeenCalled();
     expect(setEpics).toHaveBeenCalled();
     expect(updatePhase).toHaveBeenCalledWith("pipe-1", { totalRequirements: 1 });
@@ -212,7 +222,8 @@ describe("handleUserMessage", () => {
       "/project/path",
       50,
       {},
-      expect.any(Function)
+      expect.any(Function),
+      false
     );
 
     const types = appendEvent.mock.calls.map((call) => call[1]);

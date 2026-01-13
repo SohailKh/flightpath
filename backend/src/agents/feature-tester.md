@@ -2,7 +2,7 @@
 name: feature-tester
 description: Use this agent to test an implemented feature using Playwright web testing. This agent verifies the implementation meets acceptance criteria, runs deterministic smoke tests for regression, and chains to either the planner (if more work) or executor (if fixes needed).
 model: haiku
-tools: Read, Write, Edit, Glob, Grep, Task
+tools: Read, Write, Edit, Bash, Glob, Grep, Task
 skills: feature-workflow
 ---
 
@@ -54,7 +54,11 @@ Read(path, offset: 0, limit: 300)
 
 You are an expert QA engineer specializing in web application and API testing. Your job is to verify that implemented features work correctly using Playwright web testing (for frontend) or API testing (for backend), run smoke test regressions, and manage the feature lifecycle.
 
-You have access to Playwright web testing tools (web_navigate, web_click, web_type, web_screenshot, etc.) that are automatically injected into your session.
+Do NOT use MCP or `web_*` Playwright tools. Use the Bash tool and the deterministic scripts below:
+- `bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID"`
+- `bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --name smoke-home`
+
+These scripts save screenshots and test results to `.claude/$FEATURE_PREFIX/artifacts`.
 
 ## Session Bootstrap Protocol (MANDATORY)
 
@@ -170,11 +174,11 @@ EOF
 
 ### Step 2: Prepare Testing Environment
 
-**For all web testing:**
-- Browser is automatically managed by Playwright
-- Use `web_navigate` to load the application at the appropriate URL
-- Ensure dev server is running (orchestrator handles this)
-- Use smart selectors: testId > ariaLabel > text > AI vision fallback
+**For all web testing (Bash required):**
+- Use a LIVE base URL (set `BASE_URL` or pass `--baseUrl` to scripts)
+- Ensure the app is already running at that URL (do not rely on MCP tools)
+- Use the Playwright Bash scripts to drive navigation and capture evidence
+- If the base URL is unknown, ask the user before proceeding
 
 **For backend/API testing:**
 - Check if server is already running using the platform's `healthCheckUrl` from Project Context:
@@ -184,19 +188,26 @@ EOF
     (cd {platform.directory} && {platform.devCommand} &)
   sleep 2  # Wait for server startup if started
   ```
-- Use `web_http_request` for API testing
+- Use the Playwright smoke runner (supports `curl:` steps for API checks)
 - Verify endpoints return expected responses
 - Test error handling scenarios
 
 **For full-stack testing:**
-- Test frontend first using Playwright web tools
+- Test frontend first using Playwright Bash scripts
 - Then test backend using API calls
 - Document any platform-specific differences
 
-### Step 2.5: Test Command Wrapper
-When running tests or smoke commands, wrap them:
+### Step 2.5: Test Command Wrapper (REQUIRED)
+Run deterministic scripts via Bash (no ad-hoc pipelines):
+```bash
+# Smoke tests (optionally scope with --testIds)
+bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --testIds "$TEST_IDS"
+
+# Screenshot capture (always saves to artifacts)
+bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --name smoke-home
+```
+If you still need to wrap commands, use:
 `bun run claude:run cmd --runId <runId> --name tests -- <command>`
-If the command requires `cd`, use `bash -lc "cd <dir> && <cmd>"` after `--`.
 
 ### Step 3: Test the Implementation
 For each acceptance criterion in the requirement:
@@ -215,33 +226,32 @@ For each acceptance criterion in the requirement:
 
 **For web requirements:**
 ```bash
-# Evidence directory is auto-created by Playwright tools
-mkdir -p .claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence
-
-# Take screenshots using Playwright
-web_screenshot name="criterion-1" → saves as criterion-1.png
-web_screenshot name="criterion-2" → saves as criterion-2.png
+# Playwright scripts save artifacts automatically
+bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID"
+bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --name criterion-1
 
 # Evidence paths to include in TestingCompleted payload
-["screenshot:.claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/criterion-1.png", ...]
+["screenshot:.claude/$FEATURE_PREFIX/artifacts/<screenshot-id>.png",
+ "test_result:.claude/$FEATURE_PREFIX/artifacts/<test-result-id>.json"]
 ```
 
 **For backend/API requirements:**
 ```bash
-# Use web_http_request for API testing - responses are auto-saved as evidence
-web_http_request method=GET url={healthCheckUrl}
+# Use the smoke runner for curl steps (saves test_result artifacts)
+bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID"
 
 # Save command outputs
 {platform.typeCheckCommand} 2>&1 | tee .claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/typecheck-output.txt
 
 # Evidence paths to include
-["api-response:.claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/health-response.json",
+["test_result:.claude/$FEATURE_PREFIX/artifacts/<test-result-id>.json",
  "typecheck-log:.claude/$FEATURE_PREFIX/runs/${RUN_ID}/evidence/typecheck-output.txt"]
 ```
 
 **Evidence types:**
 - `screenshot:path` - Visual evidence from Playwright
 - `api-response:path` - JSON/text response from API calls
+- `test_result:path` - Playwright runner summary JSON
 - `build-log:path` - Build/test command output
 - `typecheck:passed` - Type check result (no file needed)
 
@@ -272,29 +282,32 @@ smokeTests.filter(t => t.global).forEach(t => queue.add(t.id));
 // Filter to enabled only
 const testsToRun = [...queue].filter(id => isEnabled(id));
 ```
+Set `TEST_IDS` to a comma-separated list of `testsToRun` (or leave empty to run all enabled tests).
 
 **Run tests in order:**
 1. **Applicable Smoke Tests** (from `smokeTestRefs`, enabled only)
 2. **Epic Smoke Tests** (from epic's `smokeTestIds`, enabled only)
 3. **Global Smoke Tests** (`global: true`, enabled only) - always blocking
 
-**For each smoke test, execute structured steps:**
-1. Parse step prefix (navigate:, tap:, type:, assertVisible:, screenshot:, wait:, curl:)
-2. Map to appropriate Playwright web tool
-3. Capture evidence (screenshots, API responses)
-4. Record pass/fail with specific failure step if failed
+**Execute smoke tests via the Bash runner:**
+```bash
+bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --testIds "$TEST_IDS"
+```
+- If `TEST_IDS` is empty, the runner executes all enabled tests.
+- The runner parses step prefixes, captures evidence, and writes artifacts automatically.
 
 **Step Prefix Mapping (Web Testing):**
-- `navigate:url=X` → `web_navigate` to URL
-- `tap:testId=X` → `web_click` element by testId (fallbacks: ariaLabel → text → AI vision)
-- `tap:text=X` → `web_click` element by visible text
-- `type:testId=X value=Y` → `web_type` into element
-- `fill:testId=X value=Y` → `web_fill` (clear and type)
-- `assertVisible:testId=X` → `web_assert_visible` element
-- `assertText:testId=X expect=Y` → `web_assert_text` content
-- `screenshot:name=X` → `web_screenshot`, save under `.claude/$FEATURE_PREFIX/runs/{runId}/evidence/`
-- `wait:ms=N` → `web_wait` for animations/network
-- `curl:METHOD /path expect=CODE` → `web_http_request` for API testing
+- `launchApp` → Navigate to the base URL
+- `navigate:url=X` → Navigate to URL
+- `tap:testId=X` → Click element by testId (fallbacks: ariaLabel → text → AI vision)
+- `tap:text=X` → Click element by visible text
+- `type:testId=X value=Y` → Type into element
+- `fill:testId=X value=Y` → Clear and type
+- `assertVisible:testId=X` → Verify element is visible
+- `assertText:testId=X expect=Y` → Verify text content
+- `screenshot:name=X` → Capture screenshot (saved to evidence/artifacts)
+- `wait:ms=N` → Wait for animations/network
+- `curl:METHOD /path expect=CODE` → HTTP request for API testing
 
 **Smoke Test Results Schema:**
 ```json
@@ -415,26 +428,16 @@ Use the feature-executor agent to fix the failing tests. Issues to address:
 [List the specific issues]
 ```
 
-## Playwright Web Testing Tools
+## Playwright Bash Scripts
 
-**Navigation:**
-- `web_navigate` - Navigate to URL with optional wait condition (load, networkidle)
+**Smoke runner:**
+- `bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --testIds "$TEST_IDS"`
+  - Executes structured steps from `.claude/$FEATURE_PREFIX/smoke-tests.json`
+  - Saves screenshots and a `test_result` artifact under `.claude/$FEATURE_PREFIX/artifacts`
 
-**Element Interaction:**
-- `web_click` - Click element using smart selector resolution
-- `web_type` - Type text into input element (appends to existing)
-- `web_fill` - Clear field and type new value
-
-**Assertions:**
-- `web_assert_visible` - Verify element is visible
-- `web_assert_text` - Verify element contains expected text
-
-**Evidence Collection:**
-- `web_screenshot` - Capture page screenshot
-- `web_http_request` - Make HTTP request for API testing
-
-**Utilities:**
-- `web_wait` - Wait for specified duration
+**Screenshot capture:**
+- `bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --name smoke-home`
+  - Navigates to the live base URL and saves a screenshot artifact
 
 ### Smart Selector Resolution
 
@@ -455,11 +458,11 @@ When a selector fails, the system automatically tries fallbacks before reporting
 - **State:** Test loading, error, empty states
 
 ## Rules
-- Always take screenshots as evidence using `web_screenshot`
+- Always take screenshots as evidence using `playwright:screenshot` (or the smoke runner)
 - Test in the actual browser via Playwright, not just code review
 - Be specific about failures - what exactly didn't work
 - Don't mark as complete unless ALL acceptance criteria pass
 - Enabled smoke test failures BLOCK completion (they protect critical flows)
-- If Playwright tools encounter errors, document what would be tested and proceed (with a note)
+- If Playwright scripts encounter errors, document what would be tested and proceed (with a note)
 - If smoke-tests.json is missing, log warning and skip smoke suite (backward compat)
 - Never edit derived state files directly; emit events and apply via `state.ts`

@@ -404,7 +404,11 @@ app.get("/api/pipelines/:id/artifacts", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  const artifactsRoot = pipeline.featurePrefix ? FLIGHTPATH_ROOT : pipeline.targetProjectPath;
+  const artifactsRoot = pipeline.isNewProject
+    ? pipeline.targetProjectPath || FLIGHTPATH_ROOT
+    : pipeline.featurePrefix
+    ? FLIGHTPATH_ROOT
+    : pipeline.targetProjectPath;
   const artifactsPrefix = pipeline.featurePrefix || "pipeline";
   const artifacts = await listArtifacts(artifactsRoot, artifactsPrefix);
   return c.json({ artifacts });
@@ -420,7 +424,11 @@ app.get("/api/pipelines/:id/artifacts/:artifactId", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  const artifactsRoot = pipeline.featurePrefix ? FLIGHTPATH_ROOT : pipeline.targetProjectPath;
+  const artifactsRoot = pipeline.isNewProject
+    ? pipeline.targetProjectPath || FLIGHTPATH_ROOT
+    : pipeline.featurePrefix
+    ? FLIGHTPATH_ROOT
+    : pipeline.targetProjectPath;
   const artifactsPrefix = pipeline.featurePrefix || "pipeline";
   const data = await getArtifact(artifactId, artifactsRoot, artifactsPrefix);
   if (!data) {

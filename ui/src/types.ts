@@ -78,12 +78,14 @@ export interface ToolEventData {
   outcome?: "success" | "warning";
   inputTokens?: number;
   outputTokens?: number;
+  agentName?: string;
 }
 
 // Status update data for status_update events
 export interface StatusUpdateData {
   action: string;
   phase: PipelinePhase;
+  agentName?: string;
 }
 
 // Todo item from SDK structured output

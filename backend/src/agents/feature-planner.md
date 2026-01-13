@@ -204,6 +204,38 @@ jq '.exploration' .claude/$FEATURE_PREFIX/current-feature.json
 
 **If mobile/UI work**: Reference `swiss-ux` skill for design system rules if available.
 
+### Step 3.5: Research When Needed
+
+If the requirement involves unfamiliar technologies or you need current best practices, spawn a research subagent before creating the implementation plan.
+
+**When to research:**
+- The requirement references libraries/APIs you're not confident about
+- You need to verify the best implementation approach
+- External service integration patterns are unclear
+- You want to check for common pitfalls
+
+**How to research:**
+Use the Task tool with `subagent_type="general-purpose"`:
+
+```
+Task tool parameters:
+  subagent_type: "general-purpose"
+  description: "Research [implementation topic]"
+  prompt: "Search the web to find:
+    - Current best practices for implementing [specific feature]
+    - Official API documentation for [service/library]
+    - Code examples and recommended patterns
+    - Version-specific considerations for [dependency]
+
+    Provide specific, actionable implementation guidance."
+```
+
+**Incorporate into planning:**
+- Reference authoritative sources in step descriptions
+- Note version-specific considerations in plan.notes
+- Update patterns[] with discovered approaches
+- Add relevant documentation links to implementation steps
+
 ### Step 4: Create Implementation Plan
 Write to `.claude/$FEATURE_PREFIX/current-feature.json` with fields: `runId` (set after starting a run), `requirementId`, `phase: "planning"`, `sessionId`, `lastCheckpoint`, and `plan` containing `summary`, `filesToCreate`, `filesToModify`, `patterns`, and `steps` array (each step: `step`, `description`, `completed`, `completedAt`).
 

@@ -157,6 +157,8 @@ export interface Pipeline {
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
   // Target project path (where generated code goes)
   targetProjectPath?: string;
+  // Whether the pipeline is bootstrapping a brand new project
+  isNewProject?: boolean;
   // Feature prefix from feature spec (used for artifacts paths)
   featurePrefix?: string;
   // Progress session ID for claude-progress.md
@@ -285,6 +287,7 @@ export function createPipeline(
     abortRequested: false,
     conversationHistory: [],
     targetProjectPath,
+    isNewProject: false,
     completedRequirements: [],
     failedRequirements: [],
   };
@@ -517,6 +520,20 @@ export function setTargetProjectPath(
 }
 
 /**
+ * Mark whether this pipeline is creating a brand new project
+ */
+export function setIsNewProject(
+  pipelineId: string,
+  isNewProject: boolean
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.isNewProject = isNewProject;
+  persistState();
+}
+
+/**
  * Set the feature prefix (from feature spec)
  */
 export function setFeaturePrefix(
@@ -532,13 +549,14 @@ export function setFeaturePrefix(
 
   pipeline.featurePrefix = featurePrefix;
   try {
-    pipeline.progressSessionId = startProgressSession(featurePrefix, pipelineId);
-    backfillPipelineEventLog(featurePrefix, pipelineId, pipeline.events);
+    const logRoot = pipeline.isNewProject ? pipeline.targetProjectPath : undefined;
+    pipeline.progressSessionId = startProgressSession(featurePrefix, pipelineId, logRoot);
+    backfillPipelineEventLog(featurePrefix, pipelineId, pipeline.events, logRoot);
     for (const event of pipeline.events) {
-      appendProgressLog(featurePrefix, pipelineId, event);
+      appendProgressLog(featurePrefix, pipelineId, event, logRoot);
     }
 
-    if (pipeline.targetProjectPath) {
+    if (!pipeline.isNewProject && pipeline.targetProjectPath) {
       const primaryRoot = resolveClaudeRoot();
       const targetRoot = resolveClaudeRoot(pipeline.targetProjectPath);
       if (targetRoot !== primaryRoot) {
@@ -687,7 +705,8 @@ export function appendEvent(
     try {
       pipeline.progressSessionId = startProgressSession(
         pipeline.featurePrefix,
-        pipelineId
+        pipelineId,
+        pipeline.isNewProject ? pipeline.targetProjectPath : undefined
       );
     } catch (err) {
       console.error("[Pipeline] Failed to start progress session:", err);
@@ -698,10 +717,11 @@ export function appendEvent(
 
   if (pipeline.featurePrefix) {
     try {
-      appendPipelineEventLog(pipeline.featurePrefix, pipelineId, event);
-      appendProgressLog(pipeline.featurePrefix, pipelineId, event);
+      const logRoot = pipeline.isNewProject ? pipeline.targetProjectPath : undefined;
+      appendPipelineEventLog(pipeline.featurePrefix, pipelineId, event, logRoot);
+      appendProgressLog(pipeline.featurePrefix, pipelineId, event, logRoot);
 
-      if (pipeline.targetProjectPath) {
+      if (!pipeline.isNewProject && pipeline.targetProjectPath) {
         const primaryRoot = resolveClaudeRoot();
         const targetRoot = resolveClaudeRoot(pipeline.targetProjectPath);
         if (targetRoot !== primaryRoot) {

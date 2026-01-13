@@ -119,13 +119,15 @@ const WORKFLOW_TOOLS = [
  */
 export class EventBridge {
   private pipelineId: string;
+  private agentName: string;
   private currentPhase: InferredPhase = "unknown";
   private toolStartTimes = new Map<string, number>();
   private turnInputTokens = 0;
   private turnOutputTokens = 0;
 
-  constructor(pipelineId: string) {
+  constructor(pipelineId: string, agentName: string = "harness") {
     this.pipelineId = pipelineId;
+    this.agentName = agentName;
   }
 
   /**
@@ -183,12 +185,15 @@ export class EventBridge {
       toolUseId,
       args: toolInput,
       inferredPhase: newPhase,
+      agentName: this.agentName,
     });
 
     // Emit human-readable status
     appendEvent(this.pipelineId, "status_update", {
       action: formatStatusAction(toolName, toolInput),
       inferredPhase: newPhase,
+      agentName: this.agentName,
+      statusSource: "tool",
     });
   }
 
@@ -221,6 +226,7 @@ export class EventBridge {
       result: passResult(result),
       outcome,
       inferredPhase: this.currentPhase,
+      agentName: this.agentName,
       ...(tokenUsage && {
         inputTokens: tokenUsage.inputTokens,
         outputTokens: tokenUsage.outputTokens,
@@ -240,6 +246,7 @@ export class EventBridge {
       toolUseId,
       error,
       inferredPhase: this.currentPhase,
+      agentName: this.agentName,
     });
   }
 
@@ -277,6 +284,8 @@ export class EventBridge {
         appendEvent(this.pipelineId, "status_update", {
           action: String(input.message),
           inferredPhase: this.currentPhase,
+          agentName: this.agentName,
+          statusSource: "workflow",
         });
         return "Status updated";
 
@@ -303,6 +312,8 @@ export class EventBridge {
         appendEvent(this.pipelineId, "status_update", {
           action,
           inferredPhase: this.currentPhase,
+          agentName: this.agentName,
+          statusSource: "agent",
         });
       },
     };

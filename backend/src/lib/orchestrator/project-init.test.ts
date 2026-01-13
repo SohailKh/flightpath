@@ -5,6 +5,10 @@ import { join } from "node:path";
 mock.restore();
 
 let exists = true;
+let sourceSpecExists = true;
+let targetSpecExists = false;
+let sourceSpecPath = "";
+let targetSpecPath = "";
 let readFileContent = "";
 const mkdir = jest.fn(async () => {});
 const copyFile = jest.fn(async () => {});
@@ -29,7 +33,11 @@ const exec = (
 };
 
 mock.module("node:fs", () => ({
-  existsSync: () => exists,
+  existsSync: (path: string) => {
+    if (path === targetSpecPath) return targetSpecExists;
+    if (path === sourceSpecPath) return sourceSpecExists;
+    return exists;
+  },
 }));
 
 mock.module("node:fs/promises", () => ({
@@ -44,6 +52,10 @@ const projectInit = await import(`./project-init?test=${Date.now()}`);
 
 beforeEach(() => {
   exists = true;
+  sourceSpecExists = true;
+  targetSpecExists = false;
+  sourceSpecPath = "";
+  targetSpecPath = "";
   readFileContent = "";
   execStdout = "";
   execStderr = "";
@@ -75,23 +87,27 @@ describe("generateTargetProjectPath", () => {
 describe("initializeTargetProject", () => {
   it("creates directories, initializes git, and copies spec", async () => {
     const targetPath = "/tmp/target-project";
-
-    await projectInit.initializeTargetProject(targetPath);
-
     const claudeDir = join(targetPath, ".claude", "pipeline");
-    expect(mkdir).toHaveBeenCalledWith(claudeDir, { recursive: true });
-
-    expect(execCalls).toEqual([
-      { cmd: "git init", options: { cwd: targetPath } },
-    ]);
-
+    const targetSpec = join(claudeDir, "feature-spec.v3.json");
     const sourceSpec = join(
       projectInit.FLIGHTPATH_ROOT,
       ".claude",
       "pipeline",
       "feature-spec.v3.json"
     );
-    const targetSpec = join(claudeDir, "feature-spec.v3.json");
+
+    targetSpecPath = targetSpec;
+    sourceSpecPath = sourceSpec;
+    targetSpecExists = false;
+    sourceSpecExists = true;
+
+    await projectInit.initializeTargetProject(targetPath);
+
+    expect(mkdir).toHaveBeenCalledWith(claudeDir, { recursive: true });
+
+    expect(execCalls).toEqual([
+      { cmd: "git init", options: { cwd: targetPath } },
+    ]);
 
     expect(copyFile).toHaveBeenCalledWith(sourceSpec, targetSpec);
   });

@@ -55,6 +55,127 @@ function truncate(value: string, max = 160): string {
   return value.slice(0, max - 3) + "...";
 }
 
+type FeatureRequirement = {
+  id: string;
+  title: string;
+  description: string;
+};
+
+type FeatureSpecCacheEntry = {
+  requirements: FeatureRequirement[];
+  requirementTitles: Map<string, string>;
+};
+
+const featureSpecCache = new Map<string, FeatureSpecCacheEntry>();
+const featureSpecFailures = new Set<string>();
+
+function getFeatureSpecCacheKey(featurePrefix: string, rootPath?: string): string {
+  const root = resolveRoot(rootPath);
+  const safePrefix = normalizeFeaturePrefix(featurePrefix);
+  return `${root}::${safePrefix}`;
+}
+
+function loadFeatureSpec(featurePrefix: string, rootPath?: string): FeatureSpecCacheEntry | null {
+  const cacheKey = getFeatureSpecCacheKey(featurePrefix, rootPath);
+  if (featureSpecCache.has(cacheKey)) {
+    return featureSpecCache.get(cacheKey) ?? null;
+  }
+
+  const featureDir = ensureFeatureDir(featurePrefix, rootPath);
+  const specPath = join(featureDir, "feature-spec.v3.json");
+  if (!existsSync(specPath)) {
+    return null;
+  }
+
+  try {
+    const raw = readFileSync(specPath, "utf-8");
+    const parsed = JSON.parse(raw) as { requirements?: Array<Record<string, unknown>> };
+    const rawRequirements = Array.isArray(parsed.requirements) ? parsed.requirements : [];
+    const requirements = rawRequirements.map((req, index) => {
+      const id = typeof req.id === "string" && req.id.trim() ? req.id : `req-${index + 1}`;
+      const title = typeof req.title === "string" ? req.title : "";
+      const description = typeof req.description === "string" ? req.description : "";
+      return { id, title, description };
+    });
+    const requirementTitles = new Map<string, string>();
+    for (const req of requirements) {
+      if (req.id && req.title) {
+        requirementTitles.set(req.id, req.title);
+      }
+    }
+    const entry = { requirements, requirementTitles };
+    featureSpecCache.set(cacheKey, entry);
+    featureSpecFailures.delete(cacheKey);
+    return entry;
+  } catch (error) {
+    if (!featureSpecFailures.has(cacheKey)) {
+      console.warn("[ClaudeLogs] Failed to parse feature spec:", error);
+      featureSpecFailures.add(cacheKey);
+    }
+    return null;
+  }
+}
+
+function formatFeatureLine(requirement: FeatureRequirement): string {
+  const title = requirement.title || requirement.description || "Untitled requirement";
+  const label = requirement.id ? `${requirement.id}: ${title}` : title;
+  return truncate(label, 140);
+}
+
+function getLatestFeatures(featurePrefix: string, rootPath?: string): string[] {
+  const spec = loadFeatureSpec(featurePrefix, rootPath);
+  if (!spec || spec.requirements.length === 0) return [];
+  return spec.requirements.slice(-3).map(formatFeatureLine);
+}
+
+function lookupRequirementTitle(
+  featurePrefix: string,
+  requirementId: string,
+  rootPath?: string
+): string | null {
+  const spec = loadFeatureSpec(featurePrefix, rootPath);
+  if (!spec) return null;
+  const title = spec.requirementTitles.get(requirementId);
+  return title && title.trim() ? title : null;
+}
+
+function formatRequirementLabel(
+  featurePrefix: string,
+  requirementId: string,
+  rootPath?: string
+): string {
+  const title = lookupRequirementTitle(featurePrefix, requirementId, rootPath);
+  return title ? `${requirementId}: ${title}` : requirementId;
+}
+
+function ensureSentence(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/[.!?]$/.test(trimmed)) return trimmed;
+  return `${trimmed}.`;
+}
+
+function isNoisyStatus(action: string): boolean {
+  const lower = action.trim().toLowerCase();
+  if (!lower) return true;
+  if (lower === "analyzing..." || lower === "analyzing") return true;
+
+  const noisyPrefixes = [
+    "reading ",
+    "writing ",
+    "editing ",
+    "searching ",
+    "running:",
+    "running ",
+    "fetching ",
+    "navigating ",
+    "clicking ",
+    "typing ",
+    "taking screenshot",
+  ];
+  return noisyPrefixes.some((prefix) => lower.startsWith(prefix));
+}
+
 export function startProgressSession(
   featurePrefix: string,
   pipelineId: string,
@@ -70,9 +191,18 @@ export function startProgressSession(
     writeFileSync(progressPath, "# Claude Progress\n\n", "utf-8");
   }
 
-  const timestamp = new Date().toISOString();
-  appendFileSync(progressPath, `## Session ${sessionNumber} - ${timestamp}\n`, "utf-8");
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  appendFileSync(progressPath, `## Session ${sessionNumber} - ${dateStamp}\n`, "utf-8");
   appendFileSync(progressPath, `- Pipeline ${pipelineId}\n\n`, "utf-8");
+
+  const latestFeatures = getLatestFeatures(featurePrefix, rootPath);
+  if (latestFeatures.length > 0) {
+    appendFileSync(progressPath, "### Latest Features\n", "utf-8");
+    for (const feature of latestFeatures) {
+      appendFileSync(progressPath, `- ${feature}\n`, "utf-8");
+    }
+    appendFileSync(progressPath, "\n", "utf-8");
+  }
 
   return sessionNumber;
 }
@@ -126,7 +256,7 @@ export function backfillProgressLog(
   const sessionNumber = startProgressSession(featurePrefix, pipelineId, rootPath);
 
   for (const event of events) {
-    const line = formatProgressLine(event);
+    const line = formatProgressLine(event, featurePrefix, rootPath);
     if (line) {
       appendFileSync(progressPath, `- ${line}\n`, "utf-8");
     }
@@ -135,75 +265,92 @@ export function backfillProgressLog(
   return sessionNumber;
 }
 
-function formatProgressLine(event: {
-  ts: string;
-  type: string;
-  data: Record<string, unknown>;
-}): string | null {
-  const ts = event.ts;
+function formatProgressLine(
+  event: {
+    ts: string;
+    type: string;
+    data: Record<string, unknown>;
+  },
+  featurePrefix?: string,
+  rootPath?: string
+): string | null {
   const data = event.data || {};
 
   switch (event.type) {
     case "qa_started": {
-      return `${ts} QA started`;
+      return "QA started.";
     }
     case "qa_completed": {
-      return `${ts} QA completed`;
+      return "QA completed.";
     }
     case "requirements_ready": {
-      return `${ts} Requirements generated`;
+      return "Requirements were generated.";
     }
     case "target_project_set": {
       const targetPath = data.targetPath ? String(data.targetPath) : "";
-      return targetPath ? `${ts} Target project set: ${targetPath}` : `${ts} Target project set`;
+      const message = targetPath ? `Target project set to ${truncate(targetPath, 120)}` : "Target project set";
+      return ensureSentence(message);
     }
     case "requirement_started": {
       const reqId = data.requirementId ? String(data.requirementId) : "unknown";
       const approach = data.approach ? truncate(String(data.approach)) : "";
-      return approach
-        ? `${ts} Requirement ${reqId} started: ${approach}`
-        : `${ts} Requirement ${reqId} started`;
+      const label = featurePrefix ? formatRequirementLabel(featurePrefix, reqId, rootPath) : reqId;
+      if (!approach) {
+        return ensureSentence(`Started ${label}`);
+      }
+      return ensureSentence(`Started ${label}. Approach: ${approach}`);
     }
     case "requirement_completed": {
       const reqId = data.requirementId ? String(data.requirementId) : "unknown";
       const summary = data.summary ? truncate(String(data.summary)) : "";
-      return summary
-        ? `${ts} Requirement ${reqId} completed: ${summary}`
-        : `${ts} Requirement ${reqId} completed`;
+      const label = featurePrefix ? formatRequirementLabel(featurePrefix, reqId, rootPath) : reqId;
+      if (!summary) {
+        return ensureSentence(`Completed ${label}`);
+      }
+      return ensureSentence(`Completed ${label}. Summary: ${summary}`);
     }
     case "requirement_failed": {
       const reqId = data.requirementId ? String(data.requirementId) : "unknown";
       const reason = data.reason ? truncate(String(data.reason)) : "";
-      return reason
-        ? `${ts} Requirement ${reqId} failed: ${reason}`
-        : `${ts} Requirement ${reqId} failed`;
+      const label = featurePrefix ? formatRequirementLabel(featurePrefix, reqId, rootPath) : reqId;
+      if (!reason) {
+        return ensureSentence(`Failed ${label}`);
+      }
+      return ensureSentence(`Failed ${label}. Reason: ${reason}`);
     }
     case "test_passed": {
       const testName = data.name ? truncate(String(data.name)) : "";
-      return testName ? `${ts} Test passed: ${testName}` : `${ts} Test passed`;
+      return ensureSentence(testName ? `Test passed: ${testName}` : "Test passed");
     }
     case "test_failed": {
       const testName = data.name ? truncate(String(data.name)) : "";
-      return testName ? `${ts} Test failed: ${testName}` : `${ts} Test failed`;
+      return ensureSentence(testName ? `Test failed: ${testName}` : "Test failed");
     }
     case "pipeline_completed": {
       const completed = data.completed;
       const total = data.totalRequirements;
       if (typeof completed === "number" && typeof total === "number") {
-        return `${ts} Pipeline completed (${completed}/${total})`;
+        return ensureSentence(`Pipeline completed (${completed}/${total} requirements)`);
       }
-      return `${ts} Pipeline completed`;
+      return "Pipeline completed.";
     }
     case "pipeline_failed": {
       const error = data.error ? truncate(String(data.error)) : "";
-      return error ? `${ts} Pipeline failed: ${error}` : `${ts} Pipeline failed`;
+      return ensureSentence(error ? `Pipeline failed: ${error}` : "Pipeline failed");
     }
     case "aborted": {
-      return `${ts} Pipeline aborted`;
+      return "Pipeline aborted.";
     }
     case "status_update": {
+      const statusSource = data.statusSource ? String(data.statusSource) : "";
       const action = data.action ? truncate(String(data.action)) : "";
-      return action ? `${ts} ${action}` : `${ts} Status update`;
+      if (statusSource === "tool" || statusSource === "agent") {
+        return null;
+      }
+      if (!statusSource && isNoisyStatus(action)) {
+        return null;
+      }
+      return action ? ensureSentence(action) : null;
     }
     default:
       return null;
@@ -216,7 +363,7 @@ export function appendProgressLog(
   event: { ts: string; type: string; data: Record<string, unknown> },
   rootPath?: string
 ): void {
-  const line = formatProgressLine(event);
+  const line = formatProgressLine(event, featurePrefix, rootPath);
   if (!line) return;
 
   const progressPath = getProgressPath(featurePrefix, rootPath);

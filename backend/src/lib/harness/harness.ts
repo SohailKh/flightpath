@@ -126,7 +126,9 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
   let featurePrefix = pipeline.featurePrefix;
   if (!featurePrefix) {
     try {
-      const parsed = await parseRequirementsFromSpec();
+      const parsed = await parseRequirementsFromSpec(
+        pipeline.isNewProject ? targetProjectPath : undefined
+      );
       featurePrefix = parsed.featurePrefix || "pipeline";
       setFeaturePrefix(pipelineId, featurePrefix);
     } catch (error) {
@@ -160,10 +162,11 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
     toolInput: Record<string, unknown>
   ): Promise<void> => {
     try {
+      const artifactsRoot = pipeline.isNewProject ? targetProjectPath : FLIGHTPATH_ROOT;
       const saved = await saveScreenshot(
         screenshot,
         undefined,
-        FLIGHTPATH_ROOT,
+        artifactsRoot,
         resolvedFeaturePrefix
       );
       addArtifact(pipelineId, {
@@ -206,6 +209,7 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
 
     appendEvent(pipelineId, "status_update", {
       action: "Starting agent...",
+      statusSource: "system",
     });
 
     // Run the agent

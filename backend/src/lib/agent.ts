@@ -60,6 +60,8 @@ export interface AgentWithPromptOptions {
   onToolCall?: (toolName: string, args: unknown) => Promise<unknown>;
   /** Path to target project for context injection */
   targetProjectPath?: string;
+  /** Treat target as a new project (skip file ops, no codebase analysis) */
+  isNewProject?: boolean;
   /** Callbacks for tool activity events */
   toolCallbacks?: ToolEventCallbacks;
   /** Callback with the full prompt before the agent runs */
@@ -260,6 +262,7 @@ export async function createPipelineAgent(
     maxTurns = 10,
     onStreamChunk,
     targetProjectPath,
+    isNewProject,
     toolCallbacks,
     onPrompt,
     modelOverride,
@@ -283,9 +286,10 @@ export async function createPipelineAgent(
   let systemPrompt = await loadAgentPrompt(agentName, targetProjectPath);
 
   // Inject context for new projects (no target path = building from scratch)
-  if (!targetProjectPath) {
-    // Get the actual working directory so agent knows where to write files
-    const cwd = process.cwd();
+  const treatAsNewProject = isNewProject ?? !targetProjectPath;
+  if (treatAsNewProject) {
+    // Use targetProjectPath if provided so writes land in the new project folder
+    const cwd = targetProjectPath || process.cwd();
     systemPrompt = `## Context
 This is a NEW PROJECT - there is no existing codebase to analyze.
 Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to interviewing the user about what they want to build.
@@ -598,7 +602,8 @@ export async function runPipelineAgentWithMessage(
   targetProjectPath?: string,
   maxTurns?: number,
   toolCallbacks?: ToolEventCallbacks,
-  onPrompt?: (prompt: string) => void
+  onPrompt?: (prompt: string) => void,
+  isNewProject?: boolean
 ): Promise<PipelineAgentResult> {
   // Add the user message to history
   const historyWithUserMessage: ConversationMessage[] = [
@@ -611,6 +616,7 @@ export async function runPipelineAgentWithMessage(
     conversationHistory: historyWithUserMessage,
     onStreamChunk,
     targetProjectPath,
+    isNewProject,
     maxTurns,
     toolCallbacks,
     onPrompt,
@@ -639,13 +645,15 @@ export async function runPipelineAgent(
   toolCallbacks?: ToolEventCallbacks,
   playwrightAgentOptions?: PlaywrightAgentOptions,
   modelOverride?: string,
-  onPrompt?: (prompt: string) => void
+  onPrompt?: (prompt: string) => void,
+  isNewProject?: boolean
 ): Promise<PipelineAgentResult> {
   return createPipelineAgent({
     agentName,
     conversationHistory: [{ role: "user", content: initialPrompt }],
     onStreamChunk,
     targetProjectPath,
+    isNewProject,
     maxTurns,
     toolCallbacks,
     modelOverride,

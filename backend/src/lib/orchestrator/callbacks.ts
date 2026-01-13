@@ -13,7 +13,8 @@ import { LOG, logTool, truncateResult, VERBOSE, logVerbose } from "./utils";
  */
 export function createToolCallbacks(
   pipelineId: string,
-  phase: "qa" | "exploring" | "planning" | "executing" | "testing"
+  phase: "qa" | "exploring" | "planning" | "executing" | "testing",
+  agentName?: string
 ): ToolEventCallbacks {
   const phaseLabel = phase === "qa" ? "QA" : phase.charAt(0).toUpperCase() + phase.slice(1);
 
@@ -25,6 +26,7 @@ export function createToolCallbacks(
         toolUseId,
         args: toolInput,
         phase,
+        agentName,
       });
     },
     onToolComplete: (toolName, toolInput, toolUseId, result, durationMs) => {
@@ -50,6 +52,7 @@ export function createToolCallbacks(
         result: truncateResult(result),
         outcome,
         phase,
+        agentName,
       });
     },
     onToolError: (toolName, toolInput, toolUseId, error) => {
@@ -59,10 +62,11 @@ export function createToolCallbacks(
         toolUseId,
         error,
         phase,
+        agentName,
       });
     },
     onStatusUpdate: (action) => {
-      appendEvent(pipelineId, "status_update", { action, phase });
+      appendEvent(pipelineId, "status_update", { action, phase, agentName, statusSource: "agent" });
     },
   };
 }
@@ -77,6 +81,7 @@ export function createServerLogCallbacks(pipelineId: string) {
       appendEvent(pipelineId, "status_update", {
         action: `[${platform}] ${message}`,
         phase: "testing",
+        statusSource: "system",
       });
     },
     onHealthy: (platform: string) => {

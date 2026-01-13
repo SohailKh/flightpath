@@ -89,7 +89,7 @@ describe("createToolCallbacks", () => {
     expect(appendEvent).toHaveBeenCalledWith(
       "pipe-1",
       "status_update",
-      { action: "Working", phase: "planning" }
+      expect.objectContaining({ action: "Working", phase: "planning", statusSource: "agent" })
     );
   });
 });
@@ -108,7 +108,7 @@ describe("createServerLogCallbacks", () => {
     expect(appendEvent).toHaveBeenCalledWith(
       "pipe-1",
       "status_update",
-      { action: "[web] starting", phase: "testing" }
+      expect.objectContaining({ action: "[web] starting", phase: "testing", statusSource: "system" })
     );
 
     expect(appendEvent).toHaveBeenCalledWith(

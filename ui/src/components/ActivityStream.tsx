@@ -249,8 +249,28 @@ const phaseBadgeColors: Record<PipelinePhase, string> = {
   testing: "bg-blue-100 text-blue-700",
 };
 
+// Agent label mapping for display
+const agentLabels: Record<string, string> = {
+  harness: "Harness",
+  "feature-qa": "QA",
+  "feature-planner": "Planner",
+  "feature-executor": "Executor",
+  "feature-tester": "Tester",
+  "feature-init": "Init",
+  "feature-doctor": "Doctor",
+  "feature-explorer": "Explorer",
+  "explorer-pattern": "Pattern",
+  "explorer-api": "API",
+  "explorer-test": "Test",
+};
+
+function formatAgentName(agentName: string): string {
+  return agentLabels[agentName] || agentName;
+}
+
 function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string }) {
   const data = event.data as unknown as ToolEventData;
+  const statusData = event.data as unknown as StatusUpdateData;
   const promptData = event.data as unknown as AgentPromptData;
   const [showPrompt, setShowPrompt] = useState(false);
   const time = new Date(event.ts).toLocaleTimeString("en-US", {
@@ -260,6 +280,9 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
     second: "2-digit",
   });
   const initialPrompt = getInitialPrompt(event);
+
+  // Extract agent name from event data (available for tool and status events)
+  const agentName = data.agentName || statusData.agentName || promptData.agentName;
 
   // Calculate duration to next event
   const durationToNext = nextTs
@@ -417,6 +440,11 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
             {phaseLabels[phase]}
           </span>
         )}
+        {agentName && (
+          <span className="text-[10px] px-1 rounded flex-shrink-0 bg-slate-100 text-slate-600">
+            {formatAgentName(agentName)}
+          </span>
+        )}
         <span className="w-4">{getIcon()}</span>
         <div className="flex-1">
           <div className="flex items-center gap-2">
@@ -460,6 +488,11 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
       {phase && (
         <span className={cn("text-[10px] px-1 rounded flex-shrink-0", phaseBadgeColors[phase])}>
           {phaseLabels[phase]}
+        </span>
+      )}
+      {agentName && (
+        <span className="text-[10px] px-1 rounded flex-shrink-0 bg-slate-100 text-slate-600">
+          {formatAgentName(agentName)}
         </span>
       )}
       <span className="w-4">{getIcon()}</span>
