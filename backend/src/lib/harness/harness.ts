@@ -162,11 +162,11 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
     toolInput: Record<string, unknown>
   ): Promise<void> => {
     try {
-      const artifactsRoot = pipeline.isNewProject ? targetProjectPath : FLIGHTPATH_ROOT;
+      // Use claudeStorageId for centralized artifact storage in backend/.claude/
       const saved = await saveScreenshot(
         screenshot,
         undefined,
-        artifactsRoot,
+        pipeline.claudeStorageId,
         resolvedFeaturePrefix
       );
       addArtifact(pipelineId, {
@@ -359,14 +359,41 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
           console.log(`[Harness] Usage data: ${JSON.stringify(assistantMsg.message.usage)}`);
         }
 
-        // Emit agent_response event - content is in message.content (array of content blocks)
+        // Emit events for all content blocks
         const messageContent = assistantMsg.message?.content;
         if (messageContent && Array.isArray(messageContent)) {
-          // Extract text from content blocks
-          const textContent = messageContent
-            .filter((block): block is { type: "text"; text: string } => block.type === "text")
-            .map((block) => block.text)
-            .join("\n");
+          const textParts: string[] = [];
+
+          for (const block of messageContent) {
+            if (block.type === "text") {
+              textParts.push(block.text);
+            } else if (block.type === "thinking") {
+              // Extended thinking block
+              appendEvent(pipelineId, "assistant_thinking", {
+                content: (block as { type: "thinking"; thinking: string }).thinking,
+                turnNumber: totalTurns,
+              });
+            } else if (block.type === "tool_use") {
+              // Tool use block (before execution)
+              const toolBlock = block as { type: "tool_use"; id: string; name: string; input: unknown };
+              appendEvent(pipelineId, "assistant_tool_use", {
+                toolName: toolBlock.name,
+                toolUseId: toolBlock.id,
+                input: toolBlock.input,
+                turnNumber: totalTurns,
+              });
+            } else {
+              // Generic content block for any other types
+              appendEvent(pipelineId, "assistant_content_block", {
+                blockType: block.type,
+                block,
+                turnNumber: totalTurns,
+              });
+            }
+          }
+
+          // Emit combined text content
+          const textContent = textParts.join("\n");
           if (textContent) {
             appendEvent(pipelineId, "agent_response", {
               content: textContent,
@@ -413,10 +440,27 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
           }
         } else if (result.subtype === "error_max_turns") {
           console.log(`[Harness] Agent hit max turns limit (${maxTurns})`);
+          appendEvent(pipelineId, "agent_error_detail", {
+            error: `Agent hit max turns limit (${maxTurns})`,
+            subtype: result.subtype,
+            totalTurns,
+          });
         } else {
           console.error(`[Harness] Agent error: ${result.subtype}`);
-          if ("errors" in result) {
-            console.error(`[Harness] Errors: ${result.errors.join(", ")}`);
+          appendEvent(pipelineId, "agent_error_detail", {
+            error: `Agent error: ${result.subtype}`,
+            subtype: result.subtype,
+            totalTurns,
+          });
+          if ("errors" in result && Array.isArray(result.errors)) {
+            for (const err of result.errors) {
+              console.error(`[Harness] Error detail: ${err}`);
+              appendEvent(pipelineId, "agent_error_detail", {
+                error: err,
+                subtype: result.subtype,
+                totalTurns,
+              });
+            }
           }
         }
       }

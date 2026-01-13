@@ -11,7 +11,6 @@ import {
   appendPipelineEventLog,
   appendProgressLog,
   backfillPipelineEventLog,
-  resolveClaudeRoot,
   startProgressSession,
 } from "./claude-logs";
 
@@ -87,7 +86,13 @@ export type PipelineEventType =
   | "explorer_started"
   | "explorer_completed"
   | "explorer_error"
-  | "model_selected";
+  | "model_selected"
+  // SDK content blocks
+  | "assistant_thinking"
+  | "assistant_tool_use"
+  | "assistant_content_block"
+  | "agent_error_detail"
+  | "stream_chunk";
 
 export interface PipelineEvent {
   ts: string;
@@ -166,6 +171,12 @@ export interface Pipeline {
   // Harness mode tracking (agent-driven workflow)
   completedRequirements: string[];
   failedRequirements: string[];
+  // Unique storage ID for this pipeline's .claude directory
+  // Format: {sanitizedProjectName}-{pipelineIdShort}
+  claudeStorageId?: string;
+  // V2 SDK session ID for conversation resumption
+  // Allows pipeline to resume mid-conversation after restart
+  sessionId?: string;
 }
 
 type EventSubscriber = (event: PipelineEvent) => void;
@@ -483,6 +494,7 @@ export function addFailedRequirement(
 
 /**
  * Set the target project path (where generated code will be written)
+ * Note: .claude files are stored in backend/.claude/{claudeStorageId}/, not in the target project
  */
 export function setTargetProjectPath(
   pipelineId: string,
@@ -493,26 +505,23 @@ export function setTargetProjectPath(
 
   pipeline.targetProjectPath = targetPath;
 
-  if (pipeline.featurePrefix) {
-    const primaryRoot = resolveClaudeRoot();
-    const targetRoot = resolveClaudeRoot(targetPath);
-    if (targetRoot !== primaryRoot) {
-      try {
-        backfillPipelineEventLog(
-          pipeline.featurePrefix,
-          pipelineId,
-          pipeline.events,
-          targetPath
-        );
-        backfillProgressLog(
-          pipeline.featurePrefix,
-          pipelineId,
-          pipeline.events,
-          targetPath
-        );
-      } catch (err) {
-        console.error("[Pipeline] Failed to initialize target claude logs:", err);
-      }
+  // Backfill logs to centralized storage if we have a claudeStorageId
+  if (pipeline.featurePrefix && pipeline.claudeStorageId) {
+    try {
+      backfillPipelineEventLog(
+        pipeline.featurePrefix,
+        pipelineId,
+        pipeline.events,
+        pipeline.claudeStorageId
+      );
+      backfillProgressLog(
+        pipeline.featurePrefix,
+        pipelineId,
+        pipeline.events,
+        pipeline.claudeStorageId
+      );
+    } catch (err) {
+      console.error("[Pipeline] Failed to initialize claude logs:", err);
     }
   }
 
@@ -534,6 +543,40 @@ export function setIsNewProject(
 }
 
 /**
+ * Set the claude storage ID for this pipeline
+ */
+export function setClaudeStorageId(
+  pipelineId: string,
+  storageId: string
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.claudeStorageId = storageId;
+  persistState();
+}
+
+/**
+ * Set the V2 session ID for this pipeline (enables conversation resumption)
+ */
+export function setSessionId(pipelineId: string, sessionId: string): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.sessionId = sessionId;
+  console.log(`[Pipeline] ${pipelineId.slice(0, 8)} session ID set: ${sessionId.slice(0, 8)}...`);
+  persistState();
+}
+
+/**
+ * Get the V2 session ID for a pipeline
+ */
+export function getSessionId(pipelineId: string): string | undefined {
+  const pipeline = pipelines.get(pipelineId);
+  return pipeline?.sessionId;
+}
+
+/**
  * Set the feature prefix (from feature spec)
  */
 export function setFeaturePrefix(
@@ -549,30 +592,12 @@ export function setFeaturePrefix(
 
   pipeline.featurePrefix = featurePrefix;
   try {
-    const logRoot = pipeline.isNewProject ? pipeline.targetProjectPath : undefined;
-    pipeline.progressSessionId = startProgressSession(featurePrefix, pipelineId, logRoot);
-    backfillPipelineEventLog(featurePrefix, pipelineId, pipeline.events, logRoot);
+    // Use claudeStorageId for centralized storage in backend/.claude/
+    const claudeStorageId = pipeline.claudeStorageId;
+    pipeline.progressSessionId = startProgressSession(featurePrefix, pipelineId, claudeStorageId);
+    backfillPipelineEventLog(featurePrefix, pipelineId, pipeline.events, claudeStorageId);
     for (const event of pipeline.events) {
-      appendProgressLog(featurePrefix, pipelineId, event, logRoot);
-    }
-
-    if (!pipeline.isNewProject && pipeline.targetProjectPath) {
-      const primaryRoot = resolveClaudeRoot();
-      const targetRoot = resolveClaudeRoot(pipeline.targetProjectPath);
-      if (targetRoot !== primaryRoot) {
-        backfillPipelineEventLog(
-          featurePrefix,
-          pipelineId,
-          pipeline.events,
-          pipeline.targetProjectPath
-        );
-        backfillProgressLog(
-          featurePrefix,
-          pipelineId,
-          pipeline.events,
-          pipeline.targetProjectPath
-        );
-      }
+      appendProgressLog(featurePrefix, pipelineId, event, claudeStorageId);
     }
   } catch (err) {
     console.error("[Pipeline] Failed to initialize claude logs:", err);
@@ -701,12 +726,15 @@ export function appendEvent(
 
   pipeline.events.push(event);
 
+  // Use claudeStorageId for centralized storage in backend/.claude/
+  const claudeStorageId = pipeline.claudeStorageId;
+
   if (pipeline.featurePrefix && !pipeline.progressSessionId) {
     try {
       pipeline.progressSessionId = startProgressSession(
         pipeline.featurePrefix,
         pipelineId,
-        pipeline.isNewProject ? pipeline.targetProjectPath : undefined
+        claudeStorageId
       );
     } catch (err) {
       console.error("[Pipeline] Failed to start progress session:", err);
@@ -717,28 +745,8 @@ export function appendEvent(
 
   if (pipeline.featurePrefix) {
     try {
-      const logRoot = pipeline.isNewProject ? pipeline.targetProjectPath : undefined;
-      appendPipelineEventLog(pipeline.featurePrefix, pipelineId, event, logRoot);
-      appendProgressLog(pipeline.featurePrefix, pipelineId, event, logRoot);
-
-      if (!pipeline.isNewProject && pipeline.targetProjectPath) {
-        const primaryRoot = resolveClaudeRoot();
-        const targetRoot = resolveClaudeRoot(pipeline.targetProjectPath);
-        if (targetRoot !== primaryRoot) {
-          appendPipelineEventLog(
-            pipeline.featurePrefix,
-            pipelineId,
-            event,
-            pipeline.targetProjectPath
-          );
-          appendProgressLog(
-            pipeline.featurePrefix,
-            pipelineId,
-            event,
-            pipeline.targetProjectPath
-          );
-        }
-      }
+      appendPipelineEventLog(pipeline.featurePrefix, pipelineId, event, claudeStorageId);
+      appendProgressLog(pipeline.featurePrefix, pipelineId, event, claudeStorageId);
     } catch (err) {
       console.error("[Pipeline] Failed to log claude artifacts:", err);
     }

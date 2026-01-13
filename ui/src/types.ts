@@ -31,6 +31,8 @@ export type PipelineEventType =
   | "agent_message"
   | "user_message"
   | "requirements_ready"
+  // Project setup
+  | "target_project_set"
   // Progress
   | "requirement_started"
   | "requirement_completed"
@@ -39,6 +41,13 @@ export type PipelineEventType =
   | "test_passed"
   | "test_failed"
   | "screenshot_captured"
+  // Server management
+  | "server_starting"
+  | "server_healthy"
+  | "server_error"
+  | "server_warning"
+  | "servers_ready"
+  | "servers_stopped"
   // Control
   | "retry_started"
   | "paused"
@@ -64,7 +73,13 @@ export type PipelineEventType =
   | "explorer_started"
   | "explorer_completed"
   | "explorer_error"
-  | "model_selected";
+  | "model_selected"
+  // SDK content blocks
+  | "assistant_thinking"
+  | "assistant_tool_use"
+  | "assistant_content_block"
+  | "agent_error_detail"
+  | "stream_chunk";
 
 // Tool event data for tool_started/tool_completed/tool_error events
 export interface ToolEventData {
@@ -121,6 +136,77 @@ export interface TokenUsageData {
   inputTokens: number;
   outputTokens: number;
   totalTurns: number;
+}
+
+// SDK content block data types
+export interface ThinkingEventData {
+  content: string;
+  turnNumber: number;
+}
+
+export interface ToolUseBlockData {
+  toolName: string;
+  toolUseId: string;
+  input: unknown;
+  turnNumber: number;
+}
+
+export interface ContentBlockData {
+  blockType: string;
+  block: unknown;
+  turnNumber: number;
+}
+
+export interface ErrorDetailData {
+  error: string;
+  subtype?: string;
+  totalTurns?: number;
+}
+
+export interface StreamChunkData {
+  content: string;
+  turnNumber: number;
+}
+
+// Server event data types
+export interface ServerEventData {
+  platform?: string;
+  error?: string;
+  message?: string;
+}
+
+// Test event data types
+export interface TestEventData {
+  testName?: string;
+  result?: string;
+  error?: string;
+  duration?: number;
+}
+
+export interface ScreenshotEventData {
+  artifactId: string;
+  path: string;
+  tool: string;
+  name?: string;
+}
+
+// Pipeline terminal event data types
+export interface PipelineCompletedData {
+  totalRequirements: number;
+  completed: number;
+  failed: number;
+  partial?: boolean;
+}
+
+export interface PipelineFailedData {
+  phase?: string;
+  error: string;
+}
+
+// Project setup event data
+export interface TargetProjectData {
+  projectName: string;
+  targetPath: string;
 }
 
 export interface PipelineEvent {
