@@ -14,6 +14,7 @@ const updateStatus = jest.fn();
 const setRequirements = jest.fn();
 const setEpics = jest.fn();
 const setTargetProjectPath = jest.fn();
+const setFeaturePrefix = jest.fn();
 const appendEvent = jest.fn();
 const addToConversation = jest.fn((_, role, content) => {
   pipeline?.conversationHistory.push({ role, content });
@@ -29,10 +30,12 @@ const LOG = { qa: "[QA]" };
 let parsedRequirements: Array<Record<string, unknown>> = [];
 let parsedEpics: Array<Record<string, unknown>> = [];
 let parsedProjectName = "Project";
+let parsedFeaturePrefix = "weather";
 const parseRequirementsFromSpec = jest.fn(async () => ({
   requirements: parsedRequirements,
   epics: parsedEpics,
   projectName: parsedProjectName,
+  featurePrefix: parsedFeaturePrefix,
 }));
 const generateTargetProjectPath = jest.fn(() => "/target/path");
 const initializeTargetProject = jest.fn(async () => {});
@@ -50,6 +53,7 @@ mock.module("../pipeline", () => ({
   setRequirements,
   setEpics,
   setTargetProjectPath,
+  setFeaturePrefix,
   addToConversation,
   appendEvent,
 }));
@@ -85,6 +89,7 @@ beforeEach(() => {
   parsedRequirements = [];
   parsedEpics = [];
   parsedProjectName = "Project";
+  parsedFeaturePrefix = "weather";
   specExists = false;
 });
 
@@ -142,6 +147,7 @@ describe("runQAPhase", () => {
     await runQAPhase("pipe-1", "hello");
 
     expect(parseRequirementsFromSpec).toHaveBeenCalled();
+    expect(setFeaturePrefix).toHaveBeenCalledWith("pipe-1", parsedFeaturePrefix);
     expect(setTargetProjectPath).toHaveBeenCalledWith("pipe-1", "/target/path");
     expect(initializeTargetProject).toHaveBeenCalledWith("/target/path");
     expect(setRequirements).toHaveBeenCalled();
@@ -205,7 +211,8 @@ describe("handleUserMessage", () => {
       expect.any(Function),
       "/project/path",
       50,
-      {}
+      {},
+      expect.any(Function)
     );
 
     const types = appendEvent.mock.calls.map((call) => call[1]);

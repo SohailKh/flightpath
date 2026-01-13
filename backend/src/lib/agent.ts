@@ -16,15 +16,6 @@ import {
 } from "./playwright-tools";
 import type { BrowserOptions } from "./playwright-types";
 
-export interface AgentResult {
-  reply: string;
-  requestId: string;
-}
-
-export interface AgentRunner {
-  run(message: string): Promise<AgentResult>;
-}
-
 /**
  * Available agent types for the pipeline
  */
@@ -71,6 +62,8 @@ export interface AgentWithPromptOptions {
   targetProjectPath?: string;
   /** Callbacks for tool activity events */
   toolCallbacks?: ToolEventCallbacks;
+  /** Callback with the full prompt before the agent runs */
+  onPrompt?: (prompt: string) => void;
   /** Override the model specified in agent frontmatter */
   modelOverride?: string;
   /** Enable Playwright web testing tools */
@@ -98,9 +91,11 @@ export interface AskUserQuestion {
 }
 
 /**
- * Extended result for pipeline agents
+ * Result for pipeline agents
  */
-export interface PipelineAgentResult extends AgentResult {
+export interface PipelineAgentResult {
+  reply: string;
+  requestId: string;
   conversationHistory: ConversationMessage[];
   toolCalls: Array<{ name: string; args: unknown; result: unknown }>;
   requiresUserInput: boolean;
@@ -187,49 +182,6 @@ async function parseAgentFrontmatter(
 }
 
 /**
- * Creates an agent runner with the Claude Agent SDK.
- * Uses Claude Code's authentication (must be logged in via `claude login`).
- */
-export function createAgentRunner(): AgentRunner {
-  return {
-    async run(message: string): Promise<AgentResult> {
-      const requestId = crypto.randomUUID();
-      let resultText = "";
-
-      const q = query({
-        prompt: message,
-        options: {
-          maxTurns: 1,
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          tools: [], // No tools for this simple demo
-        },
-      });
-
-      for await (const msg of q) {
-        if (msg.type === "result") {
-          const result = msg as SDKResultMessage;
-          if (result.subtype === "success") {
-            resultText = result.result;
-          } else {
-            throw new Error(
-              `Agent error: ${result.subtype}${
-                "errors" in result ? ` - ${result.errors.join(", ")}` : ""
-              }`
-            );
-          }
-        }
-      }
-
-      return {
-        reply: resultText || "No response from agent",
-        requestId,
-      };
-    },
-  };
-}
-
-/**
  * Format a human-readable status action from tool info
  */
 function formatStatusAction(toolName: string, input: unknown): string {
@@ -309,6 +261,7 @@ export async function createPipelineAgent(
     onStreamChunk,
     targetProjectPath,
     toolCallbacks,
+    onPrompt,
     modelOverride,
     enablePlaywrightTools = false,
     playwrightOptions,
@@ -371,6 +324,8 @@ When writing files (like feature-spec.v3.json), use this as the base path.
       fullPrompt += `**${msg.role === "user" ? "User" : "Assistant"}:** ${msg.content}\n\n`;
     }
   }
+
+  onPrompt?.(fullPrompt);
 
   // Wrap execution in try/finally to ensure browser cleanup
   let thinkingInterval: ReturnType<typeof setInterval> | null = null;
@@ -642,7 +597,8 @@ export async function runPipelineAgentWithMessage(
   onStreamChunk?: (chunk: string) => void,
   targetProjectPath?: string,
   maxTurns?: number,
-  toolCallbacks?: ToolEventCallbacks
+  toolCallbacks?: ToolEventCallbacks,
+  onPrompt?: (prompt: string) => void
 ): Promise<PipelineAgentResult> {
   // Add the user message to history
   const historyWithUserMessage: ConversationMessage[] = [
@@ -657,6 +613,7 @@ export async function runPipelineAgentWithMessage(
     targetProjectPath,
     maxTurns,
     toolCallbacks,
+    onPrompt,
   });
 }
 
@@ -681,7 +638,8 @@ export async function runPipelineAgent(
   maxTurns?: number,
   toolCallbacks?: ToolEventCallbacks,
   playwrightAgentOptions?: PlaywrightAgentOptions,
-  modelOverride?: string
+  modelOverride?: string,
+  onPrompt?: (prompt: string) => void
 ): Promise<PipelineAgentResult> {
   return createPipelineAgent({
     agentName,
@@ -691,6 +649,7 @@ export async function runPipelineAgent(
     maxTurns,
     toolCallbacks,
     modelOverride,
+    onPrompt,
     ...playwrightAgentOptions,
   });
 }

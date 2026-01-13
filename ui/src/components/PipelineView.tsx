@@ -12,7 +12,6 @@ import {
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { PipelineChat } from "./PipelineChat";
-import { PipelineProgress } from "./PipelineProgress";
 import { ActivityStream } from "./ActivityStream";
 import { EpicsProgressPanel } from "./EpicsProgressPanel";
 import { ArtifactPanel } from "./artifacts";
@@ -168,9 +167,6 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
         </div>
       </div>
 
-      {/* Progress indicator */}
-      <PipelineProgress pipeline={pipeline} />
-
       {/* Main content area */}
       <div className="flex-1 overflow-hidden">
         {pipeline.phase.current === "qa" ? (
@@ -249,8 +245,10 @@ function ImplementationView({
         <div className="w-1/2 h-full">
           <EpicsProgressPanel
             events={events}
+            pipelineId={pipeline.id}
             requirements={pipeline.requirements}
             epics={pipeline.epics}
+            artifacts={pipeline.artifacts}
           />
         </div>
       </div>
@@ -266,4 +264,3 @@ function ImplementationView({
     </div>
   );
 }
-

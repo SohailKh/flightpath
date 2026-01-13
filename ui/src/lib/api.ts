@@ -1,6 +1,4 @@
 import type {
-  Run,
-  RunEvent,
   Pipeline,
   PipelineEvent,
   PipelineSummary,
@@ -9,75 +7,6 @@ import type {
 } from "../types";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8787";
-
-export async function createRun(message: string): Promise<{ runId: string }> {
-  const response = await fetch(`${BACKEND_URL}/api/runs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to create run");
-  }
-
-  return response.json();
-}
-
-export async function getRun(runId: string): Promise<Run> {
-  const response = await fetch(`${BACKEND_URL}/api/runs/${runId}`);
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to get run");
-  }
-
-  return response.json();
-}
-
-export interface EventStreamCallbacks {
-  onEvent: (event: RunEvent) => void;
-  onDone: (status: string) => void;
-  onError: (error: Error) => void;
-}
-
-export function subscribeToRunEvents(
-  runId: string,
-  callbacks: EventStreamCallbacks
-): () => void {
-  const eventSource = new EventSource(`${BACKEND_URL}/api/runs/${runId}/events`);
-
-  eventSource.addEventListener("run_event", (e) => {
-    try {
-      const event = JSON.parse(e.data) as RunEvent;
-      callbacks.onEvent(event);
-    } catch (err) {
-      console.error("Failed to parse run_event:", err);
-    }
-  });
-
-  eventSource.addEventListener("done", (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      callbacks.onDone(data.status);
-    } catch (err) {
-      console.error("Failed to parse done event:", err);
-    }
-    eventSource.close();
-  });
-
-  eventSource.onerror = (err) => {
-    console.error("EventSource error:", err);
-    callbacks.onError(new Error("Connection error"));
-    eventSource.close();
-  };
-
-  // Return cleanup function
-  return () => {
-    eventSource.close();
-  };
-}
 
 // ============================================
 // Pipeline API

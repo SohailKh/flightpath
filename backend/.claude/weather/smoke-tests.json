@@ -1,0 +1,112 @@
+{
+  "featurePrefix": "weather",
+  "generatedAt": "2026-01-12T12:00:00.000Z",
+  "smokeTests": [
+    {
+      "id": "smoke-001",
+      "title": "Launch → reach HomePage",
+      "platform": "web",
+      "epicId": "epic-foundation",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "weather-006" },
+      "preconditions": ["Dev server running", "No build errors"],
+      "steps": [
+        "curl:GET http://localhost:5173 expect=200",
+        "launchBrowser:url=http://localhost:5173",
+        "assertVisible:testId=home-page",
+        "screenshot:name=home-page"
+      ]
+    },
+    {
+      "id": "smoke-002",
+      "title": "Enter zipcode → form validates",
+      "platform": "web",
+      "epicId": "epic-zipcode",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "weather-013" },
+      "preconditions": ["Dev server running", "On home page"],
+      "steps": [
+        "launchBrowser:url=http://localhost:5173",
+        "assertVisible:testId=zipcode-form",
+        "type:testId=zipcode-input value=90210",
+        "tap:testId=search-button",
+        "assertVisible:testId=weather-page",
+        "screenshot:name=weather-results"
+      ]
+    },
+    {
+      "id": "smoke-003",
+      "title": "Backend API → returns weather",
+      "platform": "backend",
+      "epicId": "epic-weather-api",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "weather-029" },
+      "preconditions": ["Backend server running", "WEATHER_API_KEY configured"],
+      "steps": [
+        "curl:GET http://localhost:3001/health expect=200",
+        "curl:GET http://localhost:3001/api/weather/90210 expect=200",
+        "assertJsonField:path=$.location exists=true",
+        "assertJsonField:path=$.temperature exists=true"
+      ]
+    },
+    {
+      "id": "smoke-004",
+      "title": "Weather page → displays current weather",
+      "platform": "web",
+      "epicId": "epic-current-weather",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "weather-045" },
+      "preconditions": ["Full stack running", "Valid zipcode"],
+      "steps": [
+        "launchBrowser:url=http://localhost:5173/weather/90210",
+        "wait:ms=2000",
+        "assertVisible:testId=location-header",
+        "assertVisible:testId=temperature-display",
+        "assertVisible:testId=weather-icon",
+        "assertVisible:testId=current-weather-card",
+        "assertVisible:testId=weather-details-grid",
+        "screenshot:name=current-weather"
+      ]
+    },
+    {
+      "id": "smoke-005",
+      "title": "Weather page → displays 5-day forecast",
+      "platform": "web",
+      "epicId": "epic-forecast",
+      "global": false,
+      "enabledWhen": { "requirementCompleted": "weather-051" },
+      "preconditions": ["Full stack running", "Valid zipcode"],
+      "steps": [
+        "launchBrowser:url=http://localhost:5173/weather/90210",
+        "wait:ms=2000",
+        "assertVisible:testId=forecast-section",
+        "assertCount:testId=forecast-day-card count=5",
+        "screenshot:name=forecast"
+      ]
+    },
+    {
+      "id": "smoke-006",
+      "title": "Full flow → search to weather with polish",
+      "platform": "web",
+      "epicId": "epic-polish",
+      "global": true,
+      "enabledWhen": { "requirementCompleted": "weather-056" },
+      "preconditions": ["Full stack running", "All components implemented"],
+      "steps": [
+        "launchBrowser:url=http://localhost:5173",
+        "assertVisible:testId=home-page",
+        "type:testId=zipcode-input value=10001",
+        "tap:testId=search-button",
+        "assertVisible:testId=loading-state",
+        "wait:ms=3000",
+        "assertVisible:testId=weather-page",
+        "assertVisible:testId=current-weather-card",
+        "assertVisible:testId=forecast-section",
+        "tap:testId=back-button",
+        "assertVisible:testId=home-page",
+        "assertVisible:testId=recent-searches",
+        "screenshot:name=full-flow-complete"
+      ]
+    }
+  ]
+}

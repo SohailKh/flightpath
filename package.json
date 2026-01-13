@@ -15,6 +15,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.76"
+    "@anthropic-ai/claude-agent-sdk": "^0.1.76",
+    "playwright": "^1.57.0"
   }
 }

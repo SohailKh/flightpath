@@ -6,15 +6,17 @@
  * the environment and handles cleanup.
  */
 
-import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKResultMessage, type SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   getPipeline,
   updateStatus,
   appendEvent,
+  addArtifact,
   markRunning,
   markStopped,
   isAbortRequested,
+  setFeaturePrefix,
   type Requirement,
 } from "../pipeline";
 import { EventBridge } from "./event-bridge";
@@ -32,6 +34,8 @@ import {
   executePlaywrightTool,
   formatPlaywrightToolsForPrompt,
 } from "../playwright-tools";
+import { saveScreenshot } from "../artifacts";
+import { FLIGHTPATH_ROOT, parseRequirementsFromSpec } from "../orchestrator/project-init";
 
 /**
  * Harness configuration
@@ -63,7 +67,8 @@ export interface HarnessResult {
 function buildPrompt(
   requirements: Requirement[],
   targetProjectPath: string,
-  enablePlaywright: boolean
+  enablePlaywright: boolean,
+  featurePrefix: string
 ): string {
   let prompt = ""
 
@@ -86,6 +91,12 @@ function buildPrompt(
 
   // Add working directory
   prompt += `## Working Directory\n\n\`${targetProjectPath}\`\n\n`;
+
+  // Add Claude logs context
+  prompt += "## Claude Logs\n\n";
+  prompt += `If present, read these for context and treat them as read-only:\n\n`;
+  prompt += `- \`.claude/${featurePrefix}/claude-progress.md\`\n`;
+  prompt += `- \`.claude/${featurePrefix}/events.ndjson\`\n\n`;
 
   // Add start instruction
   prompt += "## Start\n\n";
@@ -112,6 +123,19 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
     throw new Error(`Pipeline not found: ${pipelineId}`);
   }
 
+  let featurePrefix = pipeline.featurePrefix;
+  if (!featurePrefix) {
+    try {
+      const parsed = await parseRequirementsFromSpec();
+      featurePrefix = parsed.featurePrefix || "pipeline";
+      setFeaturePrefix(pipelineId, featurePrefix);
+    } catch (error) {
+      console.warn(`[Harness] Failed to resolve feature prefix: ${error instanceof Error ? error.message : String(error)}`);
+      featurePrefix = "pipeline";
+    }
+  }
+  const resolvedFeaturePrefix = featurePrefix || "pipeline";
+
   console.log(`[Harness] Starting with ${requirements.length} requirements`);
   console.log(`[Harness] Model: ${model}, MaxTurns: ${maxTurns}, Playwright: ${enablePlaywright}`);
 
@@ -130,6 +154,38 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
   // Initialize event bridge
   const eventBridge = new EventBridge(pipelineId);
 
+  const recordScreenshot = async (
+    screenshot: Buffer,
+    toolName: string,
+    toolInput: Record<string, unknown>
+  ): Promise<void> => {
+    try {
+      const saved = await saveScreenshot(
+        screenshot,
+        undefined,
+        FLIGHTPATH_ROOT,
+        resolvedFeaturePrefix
+      );
+      addArtifact(pipelineId, {
+        id: saved.id,
+        type: saved.type,
+        path: saved.path,
+      });
+      appendEvent(pipelineId, "screenshot_captured", {
+        artifactId: saved.id,
+        path: saved.path,
+        tool: toolName,
+        name: toolInput?.name,
+      });
+    } catch (error) {
+      console.warn(
+        `[Harness] Failed to save screenshot: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  };
+
   // Initialize Playwright if enabled
   if (enablePlaywright) {
     await initBrowser();
@@ -137,7 +193,16 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
 
   try {
     // Load and build prompt
-    const fullPrompt = buildPrompt(requirements, targetProjectPath, enablePlaywright);
+    const fullPrompt = buildPrompt(
+      requirements,
+      targetProjectPath,
+      enablePlaywright,
+      resolvedFeaturePrefix
+    );
+    appendEvent(pipelineId, "agent_prompt", {
+      prompt: fullPrompt,
+      agentName: "harness",
+    });
 
     appendEvent(pipelineId, "status_update", {
       action: "Starting agent...",
@@ -194,6 +259,10 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
                         toolName,
                         toolInput as Record<string, unknown>
                       );
+
+                      if (result.screenshot && Buffer.isBuffer(result.screenshot)) {
+                        await recordScreenshot(result.screenshot, toolName, toolInput as Record<string, unknown>);
+                      }
 
                       // Emit tool events
                       eventBridge.onToolStart(toolName, toolInput, input.tool_use_id);
@@ -278,28 +347,42 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
         totalTurns++;
         console.log(`[Harness] Turn ${totalTurns}/${maxTurns}`);
 
-        // Emit agent_response event with the full content
-        const assistantMsg = msg as {
-          type: "assistant";
-          content?: string;
-          message?: { usage?: { input_tokens?: number; output_tokens?: number } };
-        };
-        if (assistantMsg.content) {
-          appendEvent(pipelineId, "agent_response", {
-            content: assistantMsg.content,
-            turnNumber: totalTurns,
-          });
+        const assistantMsg = msg as SDKAssistantMessage;
+
+        // Debug: Log message structure
+        console.log(`[Harness] Message has usage: ${!!assistantMsg.message?.usage}`);
+        if (assistantMsg.message?.usage) {
+          console.log(`[Harness] Usage data: ${JSON.stringify(assistantMsg.message.usage)}`);
+        }
+
+        // Emit agent_response event - content is in message.content (array of content blocks)
+        const messageContent = assistantMsg.message?.content;
+        if (messageContent && Array.isArray(messageContent)) {
+          // Extract text from content blocks
+          const textContent = messageContent
+            .filter((block): block is { type: "text"; text: string } => block.type === "text")
+            .map((block) => block.text)
+            .join("\n");
+          if (textContent) {
+            appendEvent(pipelineId, "agent_response", {
+              content: textContent,
+              turnNumber: totalTurns,
+            });
+          }
         }
 
         // Extract token usage and pass delta to EventBridge for next tool_completed
-        if (assistantMsg.message?.usage) {
-          const usage = assistantMsg.message.usage;
+        const usage = assistantMsg.message?.usage;
+        if (usage) {
           const deltaInput = (usage.input_tokens ?? 0) - previousInputTokens;
           const deltaOutput = (usage.output_tokens ?? 0) - previousOutputTokens;
           previousInputTokens = usage.input_tokens ?? 0;
           previousOutputTokens = usage.output_tokens ?? 0;
 
           eventBridge.setTurnTokenDelta(deltaInput, deltaOutput);
+          console.log(`[Harness] Token delta: +${deltaInput} in, +${deltaOutput} out`);
+        } else {
+          console.log(`[Harness] No usage data in assistant message`);
         }
       }
 
@@ -308,14 +391,21 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
         if (result.subtype === "success") {
           console.log(`[Harness] Agent completed successfully`);
 
+          // Debug: Log result structure
+          console.log(`[Harness] Result has usage: ${"usage" in result}`);
+          if ("usage" in result) {
+            console.log(`[Harness] Final usage: ${JSON.stringify(result.usage)}`);
+          }
+
           // Emit token_usage event if available
+          // SDKResultMessage.usage has input_tokens and output_tokens
           if ("usage" in result && result.usage) {
-            const usage = result.usage as { input_tokens?: number; output_tokens?: number };
             appendEvent(pipelineId, "token_usage", {
-              inputTokens: usage.input_tokens ?? 0,
-              outputTokens: usage.output_tokens ?? 0,
+              inputTokens: result.usage.input_tokens ?? 0,
+              outputTokens: result.usage.output_tokens ?? 0,
               totalTurns,
             });
+            console.log(`[Harness] Emitted token_usage event: ${result.usage.input_tokens} in / ${result.usage.output_tokens} out`);
           }
         } else if (result.subtype === "error_max_turns") {
           console.log(`[Harness] Agent hit max turns limit (${maxTurns})`);

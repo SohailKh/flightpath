@@ -1,33 +1,4 @@
 // ============================================
-// Run Types (existing)
-// ============================================
-
-export type RunEventType =
-  | "received"
-  | "calling_agent"
-  | "agent_reply"
-  | "completed"
-  | "failed";
-
-export interface RunEvent {
-  ts: string;
-  type: RunEventType;
-  data: Record<string, unknown>;
-}
-
-export type RunStatus = "queued" | "running" | "succeeded" | "failed";
-
-export interface Run {
-  id: string;
-  createdAt: string;
-  status: RunStatus;
-  input: { message: string };
-  output?: { reply: string };
-  error?: { message: string };
-  events: RunEvent[];
-}
-
-// ============================================
 // Pipeline Types
 // ============================================
 
@@ -84,6 +55,7 @@ export type PipelineEventType =
   // Todo updates from agent
   | "todo_update"
   // Agent visibility (for debugging/observability)
+  | "agent_prompt"
   | "agent_response"
   | "token_usage"
   // Parallel exploration
@@ -131,6 +103,15 @@ export interface TodoEventData {
 export interface AgentResponseData {
   content: string;
   turnNumber: number;
+}
+
+// Agent prompt data for agent_prompt events
+export interface AgentPromptData {
+  prompt: string;
+  agentName?: string;
+  phase?: PipelinePhase;
+  explorerType?: ExplorerType;
+  requirementId?: string;
 }
 
 // Token usage data for token_usage events
@@ -220,7 +201,6 @@ export interface Pipeline {
   input: { initialPrompt: string };
   requirements: Requirement[];
   epics: Epic[];
-  currentRunId?: string;
   artifacts: ArtifactRef[];
   events: PipelineEvent[];
   pauseRequested: boolean;

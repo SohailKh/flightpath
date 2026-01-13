@@ -72,9 +72,10 @@ function getExtension(type: ArtifactType): string {
  */
 async function countArtifacts(
   type: ArtifactType,
-  targetProjectPath?: string
+  targetProjectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<number> {
-  const dir = getArtifactsDir(targetProjectPath);
+  const dir = getArtifactsDir(targetProjectPath, featurePrefix);
   if (!existsSync(dir)) return 0;
 
   const files = await readdir(dir);
@@ -88,12 +89,13 @@ export async function saveArtifact(
   type: ArtifactType,
   data: Buffer | string,
   requirementId?: string,
-  targetProjectPath?: string
+  targetProjectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact> {
-  const dir = getArtifactsDir(targetProjectPath);
+  const dir = getArtifactsDir(targetProjectPath, featurePrefix);
   await ensureDir(dir);
 
-  const count = await countArtifacts(type, targetProjectPath);
+  const count = await countArtifacts(type, targetProjectPath, featurePrefix);
   const id = generateArtifactId(type, count + 1);
   const ext = getExtension(type);
   const filename = `${id}${ext}`;
@@ -110,7 +112,7 @@ export async function saveArtifact(
   return {
     id,
     type,
-    path: join(getArtifactsBasePath("pipeline"), filename),
+    path: join(getArtifactsBasePath(featurePrefix), filename),
     size: stats.size,
     createdAt: new Date().toISOString(),
   };
@@ -122,9 +124,16 @@ export async function saveArtifact(
 export async function saveScreenshot(
   imageData: Buffer,
   requirementId?: string,
-  targetProjectPath?: string
+  targetProjectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact> {
-  return saveArtifact("screenshot", imageData, requirementId, targetProjectPath);
+  return saveArtifact(
+    "screenshot",
+    imageData,
+    requirementId,
+    targetProjectPath,
+    featurePrefix
+  );
 }
 
 /**
@@ -133,10 +142,17 @@ export async function saveScreenshot(
 export async function saveTestResult(
   result: Record<string, unknown>,
   requirementId?: string,
-  targetProjectPath?: string
+  targetProjectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact> {
   const jsonData = JSON.stringify(result, null, 2);
-  return saveArtifact("test_result", jsonData, requirementId, targetProjectPath);
+  return saveArtifact(
+    "test_result",
+    jsonData,
+    requirementId,
+    targetProjectPath,
+    featurePrefix
+  );
 }
 
 /**
@@ -145,9 +161,16 @@ export async function saveTestResult(
 export async function saveDiff(
   diffContent: string,
   requirementId?: string,
-  targetProjectPath?: string
+  targetProjectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact> {
-  return saveArtifact("diff", diffContent, requirementId, targetProjectPath);
+  return saveArtifact(
+    "diff",
+    diffContent,
+    requirementId,
+    targetProjectPath,
+    featurePrefix
+  );
 }
 
 /**
@@ -155,9 +178,10 @@ export async function saveDiff(
  */
 export async function getArtifact(
   artifactId: string,
-  targetProjectPath?: string
+  targetProjectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<Buffer | null> {
-  const dir = getArtifactsDir(targetProjectPath);
+  const dir = getArtifactsDir(targetProjectPath, featurePrefix);
   if (!existsSync(dir)) return null;
 
   const files = await readdir(dir);
@@ -172,9 +196,10 @@ export async function getArtifact(
  * List all artifacts
  */
 export async function listArtifacts(
-  targetProjectPath?: string
+  targetProjectPath?: string,
+  featurePrefix: string = "pipeline"
 ): Promise<SavedArtifact[]> {
-  const dir = getArtifactsDir(targetProjectPath);
+  const dir = getArtifactsDir(targetProjectPath, featurePrefix);
   if (!existsSync(dir)) return [];
 
   const files = await readdir(dir);
@@ -191,7 +216,7 @@ export async function listArtifacts(
       artifacts.push({
         id: file.replace(/\.[^.]+$/, ""), // Remove extension
         type: type as ArtifactType,
-        path: join(getArtifactsBasePath("pipeline"), file),
+        path: join(getArtifactsBasePath(featurePrefix), file),
         size: stats.size,
         createdAt: new Date(parseInt(timestamp, 10)).toISOString(),
       });

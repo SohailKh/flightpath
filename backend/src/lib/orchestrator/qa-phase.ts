@@ -4,7 +4,7 @@
  * Interactive user interview to gather feature requirements.
  */
 
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   getPipeline,
@@ -15,6 +15,7 @@ import {
   addToConversation,
   appendEvent,
   setTargetProjectPath,
+  setFeaturePrefix,
   markRunning,
   markStopped,
 } from "../pipeline";
@@ -90,7 +91,25 @@ export async function runQAPhase(
     logPhase("qa", "Starting QA agent", initialPrompt.slice(0, 100));
     appendEvent(pipelineId, "status_update", { action: "Starting feature discovery...", phase: "qa" });
 
-    const result = await runPipelineAgent("feature-qa", initialPrompt, onStreamChunk, targetProjectPath, 50, toolCallbacks);
+    const emitPrompt = (prompt: string) => {
+      appendEvent(pipelineId, "agent_prompt", {
+        prompt,
+        agentName: "feature-qa",
+        phase: "qa",
+      });
+    };
+
+    const result = await runPipelineAgent(
+      "feature-qa",
+      initialPrompt,
+      onStreamChunk,
+      targetProjectPath,
+      50,
+      toolCallbacks,
+      undefined,
+      undefined,
+      emitPrompt
+    );
 
     // Emit todo events if agent returned todos in structured output
     emitTodoEvents(pipelineId, "qa", result.structuredOutput);
@@ -183,6 +202,14 @@ export async function handleUserMessage(
     });
 
     console.log(`[QA Debug] Calling runPipelineAgentWithMessage...`);
+    const emitPrompt = (prompt: string) => {
+      appendEvent(pipelineId, "agent_prompt", {
+        prompt,
+        agentName: "feature-qa",
+        phase: "qa",
+      });
+    };
+
     const result = await runPipelineAgentWithMessage(
       "feature-qa",
       message,
@@ -190,7 +217,8 @@ export async function handleUserMessage(
       onStreamChunk,
       pipeline.targetProjectPath,
       50,
-      toolCallbacks
+      toolCallbacks,
+      emitPrompt
     );
     console.log(`[QA Debug] runPipelineAgentWithMessage returned, requiresUserInput=${result.requiresUserInput}`);
 
@@ -230,8 +258,6 @@ export async function handleUserMessage(
  * Find if any feature spec file exists in .claude/{prefix}/ folders
  */
 function findExistingSpecPath(): string | null {
-  const { readdirSync } = require("node:fs");
-
   const claudeDir = join(FLIGHTPATH_ROOT, ".claude");
   if (!existsSync(claudeDir)) return null;
 
@@ -303,6 +329,10 @@ async function onQAComplete(
     });
     updateStatus(pipelineId, "failed");
     return;
+  }
+
+  if (featurePrefix) {
+    setFeaturePrefix(pipelineId, featurePrefix);
   }
 
   // Generate and set the target project path

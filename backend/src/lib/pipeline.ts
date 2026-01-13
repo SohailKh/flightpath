@@ -6,6 +6,14 @@
  */
 
 import { loadFromFile, saveToFile, clearFile } from "./persistence";
+import {
+  backfillProgressLog,
+  appendPipelineEventLog,
+  appendProgressLog,
+  backfillPipelineEventLog,
+  resolveClaudeRoot,
+  startProgressSession,
+} from "./claude-logs";
 
 export type PipelinePhase = "qa" | "exploring" | "planning" | "executing" | "testing";
 
@@ -70,6 +78,7 @@ export type PipelineEventType =
   // Todo updates from agent
   | "todo_update"
   // Agent visibility (for debugging/observability)
+  | "agent_prompt"
   | "agent_response"
   | "token_usage"
   // Parallel exploration
@@ -148,6 +157,10 @@ export interface Pipeline {
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
   // Target project path (where generated code goes)
   targetProjectPath?: string;
+  // Feature prefix from feature spec (used for artifacts paths)
+  featurePrefix?: string;
+  // Progress session ID for claude-progress.md
+  progressSessionId?: number;
   // Harness mode tracking (agent-driven workflow)
   completedRequirements: string[];
   failedRequirements: string[];
@@ -476,6 +489,76 @@ export function setTargetProjectPath(
   if (!pipeline) return;
 
   pipeline.targetProjectPath = targetPath;
+
+  if (pipeline.featurePrefix) {
+    const primaryRoot = resolveClaudeRoot();
+    const targetRoot = resolveClaudeRoot(targetPath);
+    if (targetRoot !== primaryRoot) {
+      try {
+        backfillPipelineEventLog(
+          pipeline.featurePrefix,
+          pipelineId,
+          pipeline.events,
+          targetPath
+        );
+        backfillProgressLog(
+          pipeline.featurePrefix,
+          pipelineId,
+          pipeline.events,
+          targetPath
+        );
+      } catch (err) {
+        console.error("[Pipeline] Failed to initialize target claude logs:", err);
+      }
+    }
+  }
+
+  persistState();
+}
+
+/**
+ * Set the feature prefix (from feature spec)
+ */
+export function setFeaturePrefix(
+  pipelineId: string,
+  featurePrefix: string
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  if (pipeline.featurePrefix === featurePrefix) {
+    return;
+  }
+
+  pipeline.featurePrefix = featurePrefix;
+  try {
+    pipeline.progressSessionId = startProgressSession(featurePrefix, pipelineId);
+    backfillPipelineEventLog(featurePrefix, pipelineId, pipeline.events);
+    for (const event of pipeline.events) {
+      appendProgressLog(featurePrefix, pipelineId, event);
+    }
+
+    if (pipeline.targetProjectPath) {
+      const primaryRoot = resolveClaudeRoot();
+      const targetRoot = resolveClaudeRoot(pipeline.targetProjectPath);
+      if (targetRoot !== primaryRoot) {
+        backfillPipelineEventLog(
+          featurePrefix,
+          pipelineId,
+          pipeline.events,
+          pipeline.targetProjectPath
+        );
+        backfillProgressLog(
+          featurePrefix,
+          pipelineId,
+          pipeline.events,
+          pipeline.targetProjectPath
+        );
+      }
+    }
+  } catch (err) {
+    console.error("[Pipeline] Failed to initialize claude logs:", err);
+  }
   persistState();
 }
 
@@ -599,7 +682,47 @@ export function appendEvent(
   };
 
   pipeline.events.push(event);
+
+  if (pipeline.featurePrefix && !pipeline.progressSessionId) {
+    try {
+      pipeline.progressSessionId = startProgressSession(
+        pipeline.featurePrefix,
+        pipelineId
+      );
+    } catch (err) {
+      console.error("[Pipeline] Failed to start progress session:", err);
+    }
+  }
+
   persistState();
+
+  if (pipeline.featurePrefix) {
+    try {
+      appendPipelineEventLog(pipeline.featurePrefix, pipelineId, event);
+      appendProgressLog(pipeline.featurePrefix, pipelineId, event);
+
+      if (pipeline.targetProjectPath) {
+        const primaryRoot = resolveClaudeRoot();
+        const targetRoot = resolveClaudeRoot(pipeline.targetProjectPath);
+        if (targetRoot !== primaryRoot) {
+          appendPipelineEventLog(
+            pipeline.featurePrefix,
+            pipelineId,
+            event,
+            pipeline.targetProjectPath
+          );
+          appendProgressLog(
+            pipeline.featurePrefix,
+            pipelineId,
+            event,
+            pipeline.targetProjectPath
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[Pipeline] Failed to log claude artifacts:", err);
+    }
+  }
 
   // Notify all subscribers
   const pipelineSubscribers = subscribers.get(pipelineId);

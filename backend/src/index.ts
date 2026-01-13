@@ -2,17 +2,6 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { createAgentRunner, type AgentRunner } from "./lib/agent";
-import {
-  createRun,
-  getRun,
-  appendEvent,
-  setOutput,
-  setError,
-  subscribe,
-  isTerminal,
-  type Run,
-} from "./lib/runs";
 import {
   createPipeline,
   getPipeline,
@@ -38,17 +27,14 @@ import {
   listArtifacts,
   getContentType,
 } from "./lib/artifacts";
+import { FLIGHTPATH_ROOT } from "./lib/orchestrator/project-init";
 import { analyzeFlow } from "./lib/flow-analyzer";
 
 type Bindings = {
   ANTHROPIC_API_KEY?: string;
 };
 
-type Variables = {
-  agentRunner: AgentRunner;
-};
-
-const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+const app = new Hono<{ Bindings: Bindings }>();
 
 // CORS middleware for dev UI (Vite default port)
 app.use(
@@ -60,189 +46,9 @@ app.use(
   })
 );
 
-// Middleware to inject agent runner (allows test mocking)
-app.use("/api/*", async (c, next) => {
-  if (!c.get("agentRunner")) {
-    c.set("agentRunner", createAgentRunner());
-  }
-  await next();
-});
-
 // Health check
 app.get("/health", (c) => {
   return c.json({ ok: true });
-});
-
-// Agent message endpoint
-const AgentRequestSchema = z.object({
-  message: z.string().min(1, "message is required"),
-});
-
-app.post("/api/agent", async (c) => {
-  // Parse and validate request body
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
-  }
-
-  const parsed = AgentRequestSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json(
-      {
-        error: "Validation error",
-        details: parsed.error.flatten().fieldErrors,
-      },
-      400
-    );
-  }
-
-  const { message } = parsed.data;
-
-  try {
-    const agentRunner = c.get("agentRunner");
-    const result = await agentRunner.run(message);
-    return c.json({
-      reply: result.reply,
-      requestId: result.requestId,
-    });
-  } catch (error) {
-    console.error("Agent error:", error);
-    return c.json(
-      {
-        error: "Agent execution failed",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      500
-    );
-  }
-});
-
-// Run request schema (same as agent)
-const RunRequestSchema = z.object({
-  message: z.string().min(1, "message is required"),
-});
-
-// Create a new run (returns immediately, executes in background)
-app.post("/api/runs", async (c) => {
-  // Parse and validate request body
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
-  }
-
-  const parsed = RunRequestSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json(
-      {
-        error: "Validation error",
-        details: parsed.error.flatten().fieldErrors,
-      },
-      400
-    );
-  }
-
-  const { message } = parsed.data;
-
-  // Create run in queued status
-  const run = createRun(message);
-  appendEvent(run.id, "received", { message });
-
-  // Execute in background (non-blocking)
-  const agentRunner = c.get("agentRunner");
-  setTimeout(async () => {
-    try {
-      appendEvent(run.id, "calling_agent", {});
-      const result = await agentRunner.run(message);
-      setOutput(run.id, result.reply);
-      appendEvent(run.id, "agent_reply", { reply: result.reply });
-      appendEvent(run.id, "completed", { requestId: result.requestId });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      setError(run.id, errorMessage);
-      appendEvent(run.id, "failed", { error: errorMessage });
-    }
-  }, 0);
-
-  return c.json({ runId: run.id });
-});
-
-// Get run by ID
-app.get("/api/runs/:id", (c) => {
-  const runId = c.req.param("id");
-  const run = getRun(runId);
-
-  if (!run) {
-    return c.json({ error: "Run not found" }, 404);
-  }
-
-  return c.json(run);
-});
-
-// SSE endpoint for run events
-app.get("/api/runs/:id/events", async (c) => {
-  const runId = c.req.param("id");
-  const run = getRun(runId);
-
-  if (!run) {
-    return c.json({ error: "Run not found" }, 404);
-  }
-
-  return streamSSE(c, async (stream) => {
-    // 1. Send all existing events first
-    for (const event of run.events) {
-      await stream.writeSSE({
-        event: "run_event",
-        data: JSON.stringify(event),
-      });
-    }
-
-    // 2. If run is already complete, send done and close
-    if (isTerminal(run.id)) {
-      await stream.writeSSE({
-        event: "done",
-        data: JSON.stringify({ status: run.status }),
-      });
-      return;
-    }
-
-    // 3. Subscribe to new events until completion
-    await new Promise<void>((resolve) => {
-      const unsubscribe = subscribe(run.id, async (event) => {
-        try {
-          await stream.writeSSE({
-            event: "run_event",
-            data: JSON.stringify(event),
-          });
-
-          if (event.type === "completed" || event.type === "failed") {
-            const currentRun = getRun(run.id);
-            await stream.writeSSE({
-              event: "done",
-              data: JSON.stringify({ status: currentRun?.status }),
-            });
-            unsubscribe();
-            resolve();
-          }
-        } catch (err) {
-          // Stream might be closed, ignore write errors
-          console.error("SSE write error:", err);
-          unsubscribe();
-          resolve();
-        }
-      });
-
-      // Handle client disconnect
-      stream.onAbort(() => {
-        unsubscribe();
-        resolve();
-      });
-    });
-  });
 });
 
 // ============================================
@@ -598,7 +404,9 @@ app.get("/api/pipelines/:id/artifacts", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  const artifacts = await listArtifacts(pipeline.targetProjectPath);
+  const artifactsRoot = pipeline.featurePrefix ? FLIGHTPATH_ROOT : pipeline.targetProjectPath;
+  const artifactsPrefix = pipeline.featurePrefix || "pipeline";
+  const artifacts = await listArtifacts(artifactsRoot, artifactsPrefix);
   return c.json({ artifacts });
 });
 
@@ -612,7 +420,9 @@ app.get("/api/pipelines/:id/artifacts/:artifactId", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  const data = await getArtifact(artifactId, pipeline.targetProjectPath);
+  const artifactsRoot = pipeline.featurePrefix ? FLIGHTPATH_ROOT : pipeline.targetProjectPath;
+  const artifactsPrefix = pipeline.featurePrefix || "pipeline";
+  const data = await getArtifact(artifactId, artifactsRoot, artifactsPrefix);
   if (!data) {
     return c.json({ error: "Artifact not found" }, 404);
   }
@@ -668,9 +478,6 @@ if (typeof Bun === "undefined") {
 
 // Also export app for testing
 export { app };
-
-// Re-export runs functions for testing
-export { clearRuns, getRun } from "./lib/runs";
 
 // Re-export pipeline functions for testing
 export { clearPipelines, getPipeline } from "./lib/pipeline";

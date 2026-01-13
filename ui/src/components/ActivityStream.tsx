@@ -1,6 +1,16 @@
 import { useRef, useEffect, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import type { PipelineEvent, PipelinePhase, ToolEventData, StatusUpdateData, TodoEventData, TodoItem, AgentResponseData, TokenUsageData } from "../types";
+import type {
+  PipelineEvent,
+  PipelinePhase,
+  ToolEventData,
+  StatusUpdateData,
+  TodoEventData,
+  TodoItem,
+  AgentResponseData,
+  AgentPromptData,
+  TokenUsageData,
+} from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 
@@ -39,6 +49,13 @@ function getDefaultAction(phase: PipelinePhase): string {
     case "testing":
       return "Verifying implementation...";
   }
+}
+
+function getInitialPrompt(event: PipelineEvent): string | null {
+  if (event.type !== "qa_started") return null;
+  const data = event.data as { initialPrompt?: unknown };
+  if (typeof data.initialPrompt !== "string") return null;
+  return data.initialPrompt.trim() ? data.initialPrompt : null;
 }
 
 export function ActivityStream({ events, maxItems = 100, currentPhase }: ActivityStreamProps) {
@@ -93,6 +110,7 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
           e.type === "tool_error" ||
           e.type === "status_update" ||
           e.type === "todo_update" ||
+          e.type === "agent_prompt" ||
           e.type === "agent_response" ||
           e.type === "token_usage" ||
           e.type.endsWith("_started") ||
@@ -131,6 +149,8 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
       const data = event.data as unknown as ToolEventData;
       const statusData = event.data as unknown as StatusUpdateData;
       const agentData = event.data as unknown as AgentResponseData;
+      const initialPrompt = getInitialPrompt(event);
+      const promptData = event.data as unknown as AgentPromptData;
       const searchableText = [
         event.type,
         data.toolName,
@@ -140,6 +160,11 @@ export function ActivityStream({ events, maxItems = 100, currentPhase }: Activit
         (data.args as Record<string, unknown>)?.command,
         statusData.action,
         agentData.content,
+        promptData.prompt,
+        promptData.agentName,
+        promptData.requirementId,
+        promptData.explorerType,
+        initialPrompt,
       ]
         .filter(Boolean)
         .join(" ")
@@ -226,12 +251,15 @@ const phaseBadgeColors: Record<PipelinePhase, string> = {
 
 function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string }) {
   const data = event.data as unknown as ToolEventData;
+  const promptData = event.data as unknown as AgentPromptData;
+  const [showPrompt, setShowPrompt] = useState(false);
   const time = new Date(event.ts).toLocaleTimeString("en-US", {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   });
+  const initialPrompt = getInitialPrompt(event);
 
   // Calculate duration to next event
   const durationToNext = nextTs
@@ -268,6 +296,7 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
 
   const getIcon = () => {
     if (event.type === "todo_update") return "\u2611"; // Ballot box with check
+    if (event.type === "agent_prompt") return "P";
     if (event.type === "agent_response") return "\u{1F4AC}"; // Speech bubble
     if (event.type === "token_usage") return "\u{1F4CA}"; // Bar chart
     if (event.type === "tool_started") return ">";
@@ -285,6 +314,7 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
 
   const getColor = () => {
     if (event.type === "todo_update") return "text-indigo-600";
+    if (event.type === "agent_prompt") return "text-amber-700 bg-amber-50";
     if (event.type === "agent_response") return "text-purple-700 bg-purple-50";
     if (event.type === "token_usage") return "text-teal-600 bg-teal-50";
     if (event.type === "tool_error") return "text-red-600 bg-red-50";
@@ -308,6 +338,9 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
   };
 
   const getMessage = () => {
+    if (initialPrompt) {
+      return `Initial prompt: ${initialPrompt}`;
+    }
     if (event.type === "agent_response") {
       const agentData = event.data as unknown as AgentResponseData;
       return `Turn ${agentData.turnNumber}: ${agentData.content}`;
@@ -355,11 +388,64 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
     return event.type.replace(/_/g, " ");
   };
 
+  const promptText = typeof promptData.prompt === "string" ? promptData.prompt : "";
+  const promptLabel = promptData.agentName ? `Prompt (${promptData.agentName})` : "Prompt";
+  const promptMeta = promptData.requirementId ? `Requirement: ${promptData.requirementId}` : null;
+
   const fullPath = getFullPath();
-  const phase = data.phase;
+  const tooltip = fullPath || initialPrompt || undefined;
+  const phase = event.type === "agent_prompt" ? promptData.phase : data.phase;
 
   // Agent responses and token usage get expanded display
-  const isExpandedType = event.type === "agent_response" || event.type === "token_usage";
+  const isExpandedType =
+    event.type === "agent_response" ||
+    event.type === "token_usage" ||
+    event.type === "agent_prompt";
+
+  if (event.type === "agent_prompt") {
+    return (
+      <div
+        className={cn(
+          "flex items-start gap-2 px-3 border-b border-gray-100 hover:bg-gray-50",
+          "py-2",
+          getColor()
+        )}
+      >
+        <span className="text-gray-400 w-16 flex-shrink-0">{time}</span>
+        {phase && (
+          <span className={cn("text-[10px] px-1 rounded flex-shrink-0", phaseBadgeColors[phase])}>
+            {phaseLabels[phase]}
+          </span>
+        )}
+        <span className="w-4">{getIcon()}</span>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{promptLabel}</span>
+            {promptMeta && <span className="text-[10px] text-gray-500">{promptMeta}</span>}
+            {promptText && (
+              <button
+                type="button"
+                className="text-[10px] text-amber-700 hover:text-amber-800 underline underline-offset-2"
+                onClick={() => setShowPrompt((prev) => !prev)}
+              >
+                {showPrompt ? "Hide" : "View"}
+              </button>
+            )}
+          </div>
+          {showPrompt && promptText && (
+            <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-gray-700 bg-gray-50 border border-gray-200 rounded p-2">
+              {promptText}
+            </pre>
+          )}
+        </div>
+        {durationToNext !== null && (
+          <span className="text-gray-400 text-right flex-shrink-0 w-16">
+            {formatDuration(durationToNext)}
+          </span>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -368,7 +454,7 @@ function ActivityItem({ event, nextTs }: { event: PipelineEvent; nextTs?: string
         isExpandedType ? "py-2" : "py-1",
         getColor()
       )}
-      title={fullPath || undefined}
+      title={tooltip}
     >
       <span className="text-gray-400 w-16 flex-shrink-0">{time}</span>
       {phase && (

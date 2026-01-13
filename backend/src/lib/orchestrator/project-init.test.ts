@@ -105,6 +105,7 @@ describe("parseRequirementsFromSpec", () => {
       requirements: [],
       epics: [],
       projectName: "untitled-project",
+      featurePrefix: "untitled",
     });
   });
 

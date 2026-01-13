@@ -219,6 +219,7 @@ function parseExplorerOutput(
  * Run a single explorer agent
  */
 async function runSingleExplorer(
+  pipelineId: string,
   explorerType: ExplorerType,
   requirement: Requirement,
   targetProjectPath: string | undefined,
@@ -236,6 +237,16 @@ async function runSingleExplorer(
   });
 
   try {
+    const emitPrompt = (fullPrompt: string) => {
+      appendEvent(pipelineId, "agent_prompt", {
+        prompt: fullPrompt,
+        agentName,
+        phase: "exploring",
+        explorerType,
+        requirementId: requirement.id,
+      });
+    };
+
     const result = await Promise.race([
       runPipelineAgent(
         agentName,
@@ -243,7 +254,10 @@ async function runSingleExplorer(
         undefined, // No streaming for parallel explorers
         targetProjectPath,
         20, // Max turns - explorers need room to properly explore codebases
-        toolCallbacks
+        toolCallbacks,
+        undefined,
+        undefined,
+        emitPrompt
       ),
       timeoutPromise,
     ]);
@@ -439,7 +453,7 @@ export async function runParallelExplorers(
   // Run all explorers in parallel with Promise.allSettled
   const results = await Promise.allSettled(
     explorerTypes.map((type) =>
-      runSingleExplorer(type, requirement, targetProjectPath, toolCallbacks)
+      runSingleExplorer(pipelineId, type, requirement, targetProjectPath, toolCallbacks)
     )
   );
 

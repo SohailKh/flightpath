@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Card } from "./ui/card";
-import type { PipelineEvent, Requirement, Epic } from "../types";
+import type { PipelineEvent, Requirement, Epic, ArtifactRef } from "../types";
 import { EpicsView } from "./EpicsView";
 import { ResponseLog } from "./ResponseLog";
+import { ScreenshotGallery } from "./artifacts";
 
 interface EpicsProgressPanelProps {
   events: PipelineEvent[];
   pipelineId?: string;
   requirements?: Requirement[];
   epics?: Epic[];
+  artifacts?: ArtifactRef[];
   onQuestionSubmit?: (
     answers: Record<string, string | string[]>,
     timestamp: string
@@ -18,17 +20,20 @@ interface EpicsProgressPanelProps {
   isSending?: boolean;
 }
 
-type TabId = "epics" | "messages";
+type TabId = "epics" | "messages" | "screenshots";
 
 export function EpicsProgressPanel({
   events,
+  pipelineId,
   requirements = [],
   epics = [],
+  artifacts = [],
   onQuestionSubmit,
   answeredQuestions,
   isSending,
 }: EpicsProgressPanelProps) {
   const [activeTab, setActiveTab] = useState<TabId>("epics");
+  const screenshots = artifacts.filter((artifact) => artifact.type === "screenshot");
 
   return (
     <Card className="flex flex-col h-full">
@@ -45,13 +50,20 @@ export function EpicsProgressPanel({
           onClick={() => setActiveTab("messages")}
           label="Messages"
         />
+        <TabButton
+          active={activeTab === "screenshots"}
+          onClick={() => setActiveTab("screenshots")}
+          label="Screenshots"
+          count={screenshots.length}
+        />
       </div>
 
       {/* Tab Content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === "epics" ? (
+        {activeTab === "epics" && (
           <EpicsView epics={epics} requirements={requirements} events={events} />
-        ) : (
+        )}
+        {activeTab === "messages" && (
           <ResponseLog
             events={events}
             requirements={requirements}
@@ -59,6 +71,17 @@ export function EpicsProgressPanel({
             answeredQuestions={answeredQuestions}
             isSending={isSending}
           />
+        )}
+        {activeTab === "screenshots" && (
+          <div className="h-full overflow-y-auto p-3">
+            {pipelineId && screenshots.length > 0 ? (
+              <ScreenshotGallery pipelineId={pipelineId} screenshots={screenshots} />
+            ) : (
+              <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+                No screenshots captured yet
+              </div>
+            )}
+          </div>
         )}
       </div>
     </Card>
