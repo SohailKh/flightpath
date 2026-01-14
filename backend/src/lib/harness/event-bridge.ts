@@ -64,6 +64,14 @@ function formatStatusAction(toolName: string, input: unknown): string {
       if (desc) return desc;
       return `Running agent: ${args.subagent_type || "task"}`;
     }
+    case "AskUserQuestion": {
+      const questions = args.questions as Array<{ header?: string; question?: string }> | undefined;
+      if (questions && questions.length > 0) {
+        const header = questions[0].header;
+        if (header) return `Asking: ${header}`;
+      }
+      return "Asking user...";
+    }
     // Workflow tools
     case "start_requirement":
       return `Starting requirement: ${args.requirementId}`;

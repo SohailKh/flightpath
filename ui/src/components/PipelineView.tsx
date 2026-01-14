@@ -8,6 +8,7 @@ import {
   abortPipeline,
   resumePipeline,
   goPipeline,
+  sendPipelineMessage,
 } from "../lib/api";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -99,6 +100,22 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
     }
   }, [pipelineId]);
 
+  // Aggregate token usage from all token_usage events
+  // Note: This must be before the early return to respect Rules of Hooks
+  const totalTokens = useMemo(() => {
+    const tokenEvents = events.filter((e) => e.type === "token_usage");
+    let input = 0,
+      output = 0,
+      cost = 0;
+    for (const event of tokenEvents) {
+      const data = event.data as TokenUsageData;
+      input += data.inputTokens ?? 0;
+      output += data.outputTokens ?? 0;
+      cost += data.totalCostUsd ?? 0;
+    }
+    return { input, output, cost };
+  }, [events]);
+
   if (!pipeline) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -113,21 +130,6 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
     pipeline.status === "completed" ||
     pipeline.status === "failed" ||
     pipeline.status === "aborted";
-
-  // Aggregate token usage from all token_usage events
-  const totalTokens = useMemo(() => {
-    const tokenEvents = events.filter((e) => e.type === "token_usage");
-    let input = 0,
-      output = 0,
-      cost = 0;
-    for (const event of tokenEvents) {
-      const data = event.data as TokenUsageData;
-      input += data.inputTokens ?? 0;
-      output += data.outputTokens ?? 0;
-      cost += data.totalCostUsd ?? 0;
-    }
-    return { input, output, cost };
-  }, [events]);
 
   return (
     <div className="flex flex-col h-full gap-4">
@@ -262,6 +264,39 @@ function ImplementationView({
   pipeline: Pipeline;
   events: PipelineEvent[];
 }) {
+  const [answeredQuestions, setAnsweredQuestions] = useState<Set<string>>(new Set());
+  const [isSending, setIsSending] = useState(false);
+
+  const handleQuestionSubmit = useCallback(
+    async (answers: Record<string, string | string[]>, timestamp: string) => {
+      const formattedAnswers = Object.entries(answers)
+        .map(([header, value]) => {
+          if (Array.isArray(value)) {
+            return `${header}:\n${value.map((v) => `- ${v}`).join("\n")}`;
+          }
+          return `${header}: ${value}`;
+        })
+        .join("\n\n");
+
+      setIsSending(true);
+      setAnsweredQuestions((prev) => new Set(prev).add(timestamp));
+
+      try {
+        await sendPipelineMessage(pipeline.id, formattedAnswers);
+      } catch (err) {
+        console.error("Failed to send answers:", err);
+        setAnsweredQuestions((prev) => {
+          const next = new Set(prev);
+          next.delete(timestamp);
+          return next;
+        });
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [pipeline.id]
+  );
+
   return (
     <div className="flex flex-col gap-4 h-full">
       {/* Side-by-side content area */}
@@ -279,6 +314,9 @@ function ImplementationView({
             requirements={pipeline.requirements}
             epics={pipeline.epics}
             artifacts={pipeline.artifacts}
+            onQuestionSubmit={handleQuestionSubmit}
+            answeredQuestions={answeredQuestions}
+            isSending={isSending}
           />
         </div>
       </div>

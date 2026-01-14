@@ -17,6 +17,8 @@ import {
   markStopped,
   isAbortRequested,
   setFeaturePrefix,
+  setUserInputRequest,
+  type UserInputEntry,
   type Requirement,
 } from "../pipeline";
 import { EventBridge } from "./event-bridge";
@@ -70,7 +72,8 @@ function buildPrompt(
   targetProjectPath: string,
   enablePlaywright: boolean,
   featurePrefix: string,
-  claudeStorageId: string
+  claudeStorageId: string,
+  userInputs: UserInputEntry[]
 ): string {
   let prompt = ""
 
@@ -84,6 +87,10 @@ function buildPrompt(
     prompt += formatPlaywrightToolsForPrompt();
     prompt += "\n\n";
   }
+
+  prompt += "## User Input Protocol\n\n";
+  prompt += "If you need information from the user to continue, call `AskUserQuestion`.\n";
+  prompt += "Only ask questions that are essential to make progress or complete testing, and batch related questions together.\n\n";
 
   // Add requirements
   prompt += "## Requirements to Implement\n\n";
@@ -104,6 +111,27 @@ function buildPrompt(
   prompt += `If present, read these for context and treat them as read-only:\n\n`;
   prompt += `- \`.claude/${featurePrefix}/claude-progress.md\`\n`;
   prompt += `- \`.claude/${featurePrefix}/events.ndjson\`\n\n`;
+
+  if (userInputs.length > 0) {
+    prompt += "## User Inputs (Most Recent First)\n\n";
+    const recentInputs = [...userInputs].slice(-5).reverse();
+    for (const entry of recentInputs) {
+      prompt += `- ${entry.ts}\n`;
+      if (entry.questions && entry.questions.length > 0) {
+        prompt += "  Questions:\n";
+        for (const q of entry.questions) {
+          const label = q.header || "Question";
+          const text = q.question ? `: ${q.question}` : "";
+          prompt += `  - ${label}${text}\n`;
+        }
+      }
+      const responseText = entry.message.trim() || "(no response)";
+      prompt += "  Response:\n";
+      prompt += "  ```\n";
+      prompt += `${responseText}\n`;
+      prompt += "  ```\n\n";
+    }
+  }
 
   // Add start instruction
   prompt += "## Start\n\n";
@@ -155,6 +183,7 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
   const startTime = Date.now();
   let totalTurns = 0;
   let aborted = false;
+  let pausedForUserInput = false;
 
   // Token tracking for per-step deltas
   let previousInputTokens = 0;
@@ -272,7 +301,8 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
       targetProjectPath,
       enablePlaywright,
       resolvedFeaturePrefix,
-      pipeline.claudeStorageId || "default"
+      pipeline.claudeStorageId || "default",
+      pipeline.userInputLog ?? []
     );
     appendEvent(pipelineId, "agent_prompt", {
       prompt: fullPrompt,
@@ -337,6 +367,24 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
                     if (todoInput?.todos) {
                       eventBridge.onTodoWrite(todoInput.todos);
                     }
+                  }
+
+                  if (toolName === "AskUserQuestion") {
+                    const questions = (resolvedInput as { questions?: UserInputEntry["questions"] })
+                      ?.questions;
+                    setUserInputRequest(pipelineId, questions);
+                    appendEvent(pipelineId, "paused", {
+                      reason: "user_input",
+                      questions: questions ?? [],
+                    });
+                    updateStatus(pipelineId, "paused");
+                    pausedForUserInput = true;
+                    eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
+                    return {
+                      continue: false,
+                      tool_result:
+                        "Questions have been sent to the user. Please wait for their response before continuing.",
+                    };
                   }
 
                   // Handle Playwright tools
@@ -575,7 +623,9 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
     }
   } finally {
     // Cleanup
-    eventBridge.finalize();
+    if (!pausedForUserInput) {
+      eventBridge.finalize();
+    }
 
     if (enablePlaywright) {
       await closeBrowser();
@@ -589,6 +639,21 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
 
   console.log(`[Harness] Completed in ${durationMs}ms`);
   console.log(`[Harness] ${summary.completed}/${summary.total} requirements completed, ${summary.failed} failed`);
+
+  if (pausedForUserInput) {
+    return {
+      success: false,
+      completedRequirements: pipeline.requirements
+        .filter((r) => r.status === "completed")
+        .map((r) => r.id),
+      failedRequirements: pipeline.requirements
+        .filter((r) => r.status === "failed")
+        .map((r) => r.id),
+      totalTurns,
+      durationMs,
+      aborted: false,
+    };
+  }
 
   // Update pipeline status
   const allProcessed = areAllRequirementsProcessed(pipelineId);

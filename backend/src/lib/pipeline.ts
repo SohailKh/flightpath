@@ -6,6 +6,7 @@
  */
 
 import { loadFromFile, saveToFile, clearFile } from "./persistence";
+import type { AskUserQuestion } from "./agent";
 import {
   backfillProgressLog,
   appendPipelineEventLog,
@@ -144,6 +145,12 @@ export interface PhaseState {
   retryCount: number;
 }
 
+export interface UserInputEntry {
+  ts: string;
+  message: string;
+  questions?: AskUserQuestion[];
+}
+
 export interface Pipeline {
   id: string;
   createdAt: string;
@@ -160,6 +167,10 @@ export interface Pipeline {
   abortRequested: boolean;
   // Conversation history for QA phase
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  // User input for non-QA interruptions (AskUserQuestion)
+  awaitingUserInput: boolean;
+  pendingUserQuestions?: AskUserQuestion[];
+  userInputLog: UserInputEntry[];
   // Target project path (where generated code goes)
   targetProjectPath?: string;
   // Whether the pipeline is bootstrapping a brand new project
@@ -240,6 +251,9 @@ function loadPersistedState(): void {
   if (state) {
     pipelines.clear();
     for (const [id, pipeline] of state.pipelines) {
+      pipeline.awaitingUserInput = pipeline.awaitingUserInput ?? false;
+      pipeline.userInputLog = pipeline.userInputLog ?? [];
+      pipeline.pendingUserQuestions = pipeline.pendingUserQuestions ?? undefined;
       pipelines.set(id, pipeline);
       subscribers.set(id, new Set());
     }
@@ -297,6 +311,9 @@ export function createPipeline(
     pauseRequested: false,
     abortRequested: false,
     conversationHistory: [],
+    awaitingUserInput: false,
+    pendingUserQuestions: undefined,
+    userInputLog: [],
     targetProjectPath,
     isNewProject: false,
     completedRequirements: [],
@@ -648,6 +665,54 @@ export function setCurrentRunId(
   if (!pipeline) return;
 
   pipeline.currentRunId = runId;
+  persistState();
+}
+
+/**
+ * Mark pipeline as awaiting user input from AskUserQuestion
+ */
+export function setUserInputRequest(
+  pipelineId: string,
+  questions: AskUserQuestion[] | undefined
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.awaitingUserInput = true;
+  pipeline.pendingUserQuestions =
+    questions && questions.length > 0 ? questions : undefined;
+  persistState();
+}
+
+/**
+ * Clear pending user input state
+ */
+export function clearUserInputRequest(pipelineId: string): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.awaitingUserInput = false;
+  pipeline.pendingUserQuestions = undefined;
+  persistState();
+}
+
+/**
+ * Record a user response (paired with any pending questions)
+ */
+export function addUserInput(pipelineId: string, message: string): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  const entry: UserInputEntry = {
+    ts: new Date().toISOString(),
+    message,
+    questions:
+      pipeline.pendingUserQuestions && pipeline.pendingUserQuestions.length > 0
+        ? pipeline.pendingUserQuestions
+        : undefined,
+  };
+
+  pipeline.userInputLog.push(entry);
   persistState();
 }
 

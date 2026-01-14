@@ -282,6 +282,12 @@ export interface AskUserQuestion {
   multiSelect: boolean;
 }
 
+export interface UserInputEntry {
+  ts: string;
+  message: string;
+  questions?: AskUserQuestion[];
+}
+
 export interface Pipeline {
   id: string;
   createdAt: string;
@@ -295,6 +301,9 @@ export interface Pipeline {
   pauseRequested: boolean;
   abortRequested: boolean;
   conversationHistory: ConversationMessage[];
+  awaitingUserInput: boolean;
+  pendingUserQuestions?: AskUserQuestion[];
+  userInputLog: UserInputEntry[];
   /** Whether the pipeline loop is actively running (not persisted - false after server restart) */
   isRunning?: boolean;
 }

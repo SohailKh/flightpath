@@ -8,9 +8,12 @@ import {
   getAllPipelines,
   hasActivePipeline,
   getActivePipelineId,
+  appendEvent,
   requestPause,
   requestAbort,
   resume as resumePipelineState,
+  addUserInput,
+  clearUserInputRequest,
   subscribe as subscribePipeline,
   isTerminal as isPipelineTerminal,
   isRunning as isPipelineRunning,
@@ -227,13 +230,6 @@ app.post("/api/pipelines/:id/message", async (c) => {
     return c.json({ error: "Pipeline not found" }, 404);
   }
 
-  if (pipeline.phase.current !== "qa") {
-    return c.json(
-      { error: "Messages only allowed during QA phase" },
-      400
-    );
-  }
-
   // Parse and validate request body
   let body: unknown;
   try {
@@ -257,12 +253,52 @@ app.post("/api/pipelines/:id/message", async (c) => {
   const truncatedMsg = message.length > 60 ? message.slice(0, 57) + "..." : message;
   console.log(`[API] POST /api/pipelines/${pipelineId}/message: "${truncatedMsg}"`);
 
-  // Handle message in background
-  setTimeout(() => {
-    handleUserMessage(pipelineId, message).catch((err) => {
-      console.error("[API] Message handling error:", err);
-    });
-  }, 0);
+  if (pipeline.phase.current === "qa") {
+    // Handle message in background (QA phase)
+    setTimeout(() => {
+      handleUserMessage(pipelineId, message).catch((err) => {
+        console.error("[API] Message handling error:", err);
+      });
+    }, 0);
+  } else if (pipeline.awaitingUserInput) {
+    // Handle message in background (paused for user input)
+    setTimeout(() => {
+      try {
+        const current = getPipeline(pipelineId);
+        if (!current) return;
+        appendEvent(pipelineId, "user_message", { content: message });
+        addUserInput(pipelineId, message);
+        clearUserInputRequest(pipelineId);
+        resumePipelineState(pipelineId);
+
+        const pendingRequirements = current.requirements.filter(
+          (r) => r.status === "pending" || r.status === "in_progress"
+        );
+
+        if (pendingRequirements.length === 0) {
+          return;
+        }
+
+        runHarness({
+          pipelineId,
+          requirements: pendingRequirements,
+          targetProjectPath: current.targetProjectPath || process.cwd(),
+          model: "opus",
+          maxTurns: 500,
+          enablePlaywright: true,
+        }).catch((err: Error) => {
+          console.error("[API] Resume after user input error:", err);
+        });
+      } catch (err) {
+        console.error("[API] User input handling error:", err);
+      }
+    }, 0);
+  } else {
+    return c.json(
+      { error: "Messages only allowed during QA or when user input is requested" },
+      400
+    );
+  }
 
   return c.json({ ok: true });
 });
@@ -318,6 +354,7 @@ app.post("/api/pipelines/:id/resume", async (c) => {
 
   console.log(`[API] POST /api/pipelines/${pipelineId}/resume`);
   resumePipelineState(pipelineId);
+  clearUserInputRequest(pipelineId);
 
   // Get pending requirements and resume with harness
   const pendingRequirements = pipeline.requirements.filter(
