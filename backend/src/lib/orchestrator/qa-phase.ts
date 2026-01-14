@@ -93,6 +93,7 @@ async function getOrCreateSession(
     console.log(`[QA] Resuming existing session ${existingSessionId.slice(0, 8)}...`);
     session = await resumeV2Session(existingSessionId, {
       agentName: "feature-qa",
+      pipelineId,
       targetProjectPath,
       claudeStorageId,
       isNewProject,
@@ -111,6 +112,7 @@ async function getOrCreateSession(
     // Create new session
     session = await createV2Session({
       agentName: "feature-qa",
+      pipelineId,
       targetProjectPath,
       claudeStorageId,
       isNewProject,

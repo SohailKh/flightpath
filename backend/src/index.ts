@@ -32,6 +32,7 @@ import {
 } from "./lib/artifacts";
 // FLIGHTPATH_ROOT import removed - artifacts now use centralized storage via claudeStorageId
 import { analyzeFlow } from "./lib/flow-analyzer";
+import { getTelegramConfig, isTelegramChatAllowed } from "./lib/telegram";
 
 type Bindings = {
   ANTHROPIC_API_KEY?: string;
@@ -221,6 +222,61 @@ const MessageRequestSchema = z.object({
   message: z.string().min(1, "message is required"),
 });
 
+function enqueuePipelineMessage(
+  pipeline: Pipeline,
+  message: string
+): { ok: boolean; status?: number; error?: string } {
+  if (pipeline.phase.current === "qa") {
+    setTimeout(() => {
+      handleUserMessage(pipeline.id, message).catch((err) => {
+        console.error("[API] Message handling error:", err);
+      });
+    }, 0);
+    return { ok: true };
+  }
+
+  if (pipeline.awaitingUserInput) {
+    setTimeout(() => {
+      try {
+        const current = getPipeline(pipeline.id);
+        if (!current) return;
+        appendEvent(pipeline.id, "user_message", { content: message });
+        addUserInput(pipeline.id, message);
+        clearUserInputRequest(pipeline.id);
+        resumePipelineState(pipeline.id);
+
+        const pendingRequirements = current.requirements.filter(
+          (r) => r.status === "pending" || r.status === "in_progress"
+        );
+
+        if (pendingRequirements.length === 0) {
+          return;
+        }
+
+        runHarness({
+          pipelineId: pipeline.id,
+          requirements: pendingRequirements,
+          targetProjectPath: current.targetProjectPath || process.cwd(),
+          model: "opus",
+          maxTurns: 500,
+          enablePlaywright: true,
+        }).catch((err: Error) => {
+          console.error("[API] Resume after user input error:", err);
+        });
+      } catch (err) {
+        console.error("[API] User input handling error:", err);
+      }
+    }, 0);
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    status: 400,
+    error: "Messages only allowed during QA or when user input is requested",
+  };
+}
+
 // Send user message during QA phase
 app.post("/api/pipelines/:id/message", async (c) => {
   const pipelineId = c.req.param("id");
@@ -253,51 +309,61 @@ app.post("/api/pipelines/:id/message", async (c) => {
   const truncatedMsg = message.length > 60 ? message.slice(0, 57) + "..." : message;
   console.log(`[API] POST /api/pipelines/${pipelineId}/message: "${truncatedMsg}"`);
 
-  if (pipeline.phase.current === "qa") {
-    // Handle message in background (QA phase)
-    setTimeout(() => {
-      handleUserMessage(pipelineId, message).catch((err) => {
-        console.error("[API] Message handling error:", err);
-      });
-    }, 0);
-  } else if (pipeline.awaitingUserInput) {
-    // Handle message in background (paused for user input)
-    setTimeout(() => {
-      try {
-        const current = getPipeline(pipelineId);
-        if (!current) return;
-        appendEvent(pipelineId, "user_message", { content: message });
-        addUserInput(pipelineId, message);
-        clearUserInputRequest(pipelineId);
-        resumePipelineState(pipelineId);
+  const result = enqueuePipelineMessage(pipeline, message);
+  if (!result.ok) {
+    return c.json({ error: result.error }, result.status ?? 400);
+  }
 
-        const pendingRequirements = current.requirements.filter(
-          (r) => r.status === "pending" || r.status === "in_progress"
-        );
+  return c.json({ ok: true });
+});
 
-        if (pendingRequirements.length === 0) {
-          return;
-        }
+// Telegram webhook for AskUserQuestion replies
+app.post("/api/integrations/telegram/webhook", async (c) => {
+  const { webhookSecret } = getTelegramConfig();
+  if (webhookSecret) {
+    const provided = c.req.header("X-Telegram-Bot-Api-Secret-Token");
+    if (provided !== webhookSecret) {
+      return c.json({ ok: false, error: "Unauthorized" }, 401);
+    }
+  }
 
-        runHarness({
-          pipelineId,
-          requirements: pendingRequirements,
-          targetProjectPath: current.targetProjectPath || process.cwd(),
-          model: "opus",
-          maxTurns: 500,
-          enablePlaywright: true,
-        }).catch((err: Error) => {
-          console.error("[API] Resume after user input error:", err);
-        });
-      } catch (err) {
-        console.error("[API] User input handling error:", err);
-      }
-    }, 0);
-  } else {
-    return c.json(
-      { error: "Messages only allowed during QA or when user input is requested" },
-      400
-    );
+  let update: unknown;
+  try {
+    update = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "Invalid JSON body" }, 400);
+  }
+
+  const message =
+    (update as { message?: { text?: string; caption?: string; chat?: { id?: number } } })
+      ?.message ||
+    (update as { edited_message?: { text?: string; caption?: string; chat?: { id?: number } } })
+      ?.edited_message;
+
+  const text = message?.text || message?.caption;
+  const chatId = message?.chat?.id;
+
+  if (!text || !chatId) {
+    return c.json({ ok: true });
+  }
+
+  if (!isTelegramChatAllowed(chatId)) {
+    return c.json({ ok: true });
+  }
+
+  const activePipelineId = getActivePipelineId();
+  if (!activePipelineId) {
+    return c.json({ ok: true });
+  }
+
+  const pipeline = getPipeline(activePipelineId);
+  if (!pipeline) {
+    return c.json({ ok: true });
+  }
+
+  const result = enqueuePipelineMessage(pipeline, text.trim());
+  if (!result.ok) {
+    return c.json({ ok: false, error: result.error ?? "Message ignored" });
   }
 
   return c.json({ ok: true });

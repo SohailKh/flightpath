@@ -28,6 +28,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { loadProjectConfig, generateProjectContext } from "./project-config";
 import { rewriteClaudeCommand, rewriteClaudeFilePath } from "./claude-paths";
 import type { AgentName, ToolEventCallbacks, AskUserQuestion } from "./agent";
+import { notifyTelegramQuestions } from "./telegram";
 
 // Flightpath root directory - resolved at module load time
 const FLIGHTPATH_ROOT = resolve(import.meta.dirname, "..", "..");
@@ -48,6 +49,8 @@ export interface SessionState {
  */
 export interface V2SessionOptions {
   agentName: AgentName;
+  /** Pipeline ID for notifications */
+  pipelineId?: string;
   /** Path to target project for context injection */
   targetProjectPath?: string;
   /** Storage ID for centralized .claude paths */
@@ -336,6 +339,7 @@ function buildHooks(
   userQuestions: AskUserQuestion[],
   seenQuestionKeys: Set<string>,
   setRequiresUserInput: (value: boolean) => void,
+  pipelineId?: string,
   sessionCwd?: string,
   claudeStorageId?: string
 ): Partial<Record<HookEvent, HookCallbackMatcher[]>> | undefined {
@@ -379,6 +383,9 @@ function buildHooks(
             seenQuestionKeys.add(key);
             userQuestions.push(q);
           }
+        }
+        if (pipelineId) {
+          void notifyTelegramQuestions(pipelineId, toolInput.questions, "qa");
         }
       }
       toolCalls.push({
@@ -494,6 +501,7 @@ export async function createV2Session(
 ): Promise<V2Session> {
   const {
     agentName,
+    pipelineId,
     targetProjectPath,
     claudeStorageId,
     isNewProject,
@@ -569,6 +577,7 @@ When writing files (like feature-spec.v3.json), use this as the base path.
       userQuestions,
       seenQuestionKeys,
       setRequiresUserInput,
+      pipelineId,
       sessionCwd,
       claudeStorageId
     ),
@@ -657,8 +666,14 @@ export async function resumeV2Session(
   sessionId: string,
   options: V2SessionOptions
 ): Promise<V2Session> {
-  const { agentName, targetProjectPath, toolCallbacks, modelOverride, maxTurns = 50 } =
-    options;
+  const {
+    agentName,
+    pipelineId,
+    targetProjectPath,
+    toolCallbacks,
+    modelOverride,
+    maxTurns = 50,
+  } = options;
   const sessionCwd = targetProjectPath
     ? resolveUserPath(targetProjectPath, process.cwd())
     : undefined;
@@ -704,6 +719,7 @@ export async function resumeV2Session(
       userQuestions,
       seenQuestionKeys,
       setRequiresUserInput,
+      pipelineId,
       sessionCwd,
       claudeStorageId
     ),

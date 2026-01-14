@@ -39,6 +39,7 @@ import {
 import { saveScreenshot } from "../artifacts";
 import { rewriteClaudeCommand, rewriteClaudeFilePath } from "../claude-paths";
 import { FLIGHTPATH_ROOT, parseRequirementsFromSpec } from "../orchestrator/project-init";
+import { notifyTelegramQuestions } from "../telegram";
 
 /**
  * Harness configuration
@@ -379,6 +380,11 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
                     });
                     updateStatus(pipelineId, "paused");
                     pausedForUserInput = true;
+                    void notifyTelegramQuestions(
+                      pipelineId,
+                      questions ?? [],
+                      pipeline.phase.current
+                    );
                     eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
                     return {
                       continue: false,
