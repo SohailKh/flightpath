@@ -157,8 +157,10 @@ describe("runQAPhase", () => {
     expect(setTargetProjectPath).toHaveBeenCalledWith("pipe-1", "/project/path");
     expect(initializeTargetProject).toHaveBeenCalledWith(
       "/project/path",
+      expect.any(String),
       parsedFeaturePrefix,
-      "/project/path"
+      "/project/path",
+      false
     );
     expect(setRequirements).toHaveBeenCalled();
     expect(setEpics).toHaveBeenCalled();

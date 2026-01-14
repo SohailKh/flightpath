@@ -35,6 +35,7 @@ import {
   formatPlaywrightToolsForPrompt,
 } from "../playwright-tools";
 import { saveScreenshot } from "../artifacts";
+import { rewriteClaudeCommand, rewriteClaudeFilePath } from "../claude-paths";
 import { FLIGHTPATH_ROOT, parseRequirementsFromSpec } from "../orchestrator/project-init";
 
 /**
@@ -161,6 +162,70 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
 
   // Initialize event bridge
   const eventBridge = new EventBridge(pipelineId);
+  const claudeStorageId = pipeline.claudeStorageId;
+
+  const rewriteToolInput = (
+    toolName: string,
+    toolInput: unknown
+  ): { resolvedInput: unknown; updatedInput?: Record<string, unknown> } => {
+    if (!claudeStorageId || !toolInput || typeof toolInput !== "object") {
+      return { resolvedInput: toolInput };
+    }
+
+    const input = toolInput as Record<string, unknown>;
+    const next: Record<string, unknown> = { ...input };
+    let updated = false;
+
+    const updatePathKey = (key: string) => {
+      const raw = input[key];
+      if (typeof raw !== "string") return;
+      const rewritten = rewriteClaudeFilePath(raw, claudeStorageId);
+      if (rewritten !== raw) {
+        next[key] = rewritten;
+        updated = true;
+      }
+    };
+
+    switch (toolName) {
+      case "Read":
+      case "Edit":
+      case "Write":
+        updatePathKey("file_path");
+        break;
+      case "Glob":
+        updatePathKey("pattern");
+        break;
+      case "Grep":
+        updatePathKey("path");
+        break;
+      case "LS":
+      case "Tree":
+        updatePathKey("path");
+        updatePathKey("directory");
+        break;
+      case "Bash": {
+        const rawCommand = input.command;
+        if (typeof rawCommand === "string") {
+          const rewritten = rewriteClaudeCommand(rawCommand, claudeStorageId);
+          if (rewritten !== rawCommand) {
+            next.command = rewritten;
+            updated = true;
+          }
+        }
+        break;
+      }
+      default:
+        updatePathKey("path");
+        updatePathKey("directory");
+        break;
+    }
+
+    if (!updated) {
+      return { resolvedInput: toolInput };
+    }
+
+    return { resolvedInput: next, updatedInput: next };
+  };
 
   const recordScreenshot = async (
     screenshot: Buffer,
@@ -247,14 +312,17 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
                   }
 
                   const toolName = input.tool_name;
-                  const toolInput = input.tool_input;
+                  const { resolvedInput, updatedInput } = rewriteToolInput(
+                    toolName,
+                    input.tool_input
+                  );
 
                   // Handle workflow tools
                   if (isWorkflowTool(toolName)) {
                     const result = handleWorkflowTool(
                       pipelineId,
                       toolName as WorkflowToolName,
-                      toolInput,
+                      resolvedInput,
                       eventBridge
                     );
                     return {
@@ -265,7 +333,7 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
 
                   // Handle TodoWrite for real-time updates
                   if (toolName === "TodoWrite") {
-                    const todoInput = toolInput as { todos?: unknown[] };
+                    const todoInput = resolvedInput as { todos?: unknown[] };
                     if (todoInput?.todos) {
                       eventBridge.onTodoWrite(todoInput.todos);
                     }
@@ -276,16 +344,25 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
                     try {
                       const result = await executePlaywrightTool(
                         toolName,
-                        toolInput as Record<string, unknown>
+                        resolvedInput as Record<string, unknown>
                       );
 
                       if (result.screenshot && Buffer.isBuffer(result.screenshot)) {
-                        await recordScreenshot(result.screenshot, toolName, toolInput as Record<string, unknown>);
+                        await recordScreenshot(
+                          result.screenshot,
+                          toolName,
+                          resolvedInput as Record<string, unknown>
+                        );
                       }
 
                       // Emit tool events
-                      eventBridge.onToolStart(toolName, toolInput, input.tool_use_id);
-                      eventBridge.onToolComplete(toolName, toolInput, input.tool_use_id, result);
+                      eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
+                      eventBridge.onToolComplete(
+                        toolName,
+                        resolvedInput,
+                        input.tool_use_id,
+                        result
+                      );
 
                       // Serialize result (without screenshot buffer)
                       const serializedResult = {
@@ -299,7 +376,12 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
                       };
                     } catch (error) {
                       const errorMsg = error instanceof Error ? error.message : String(error);
-                      eventBridge.onToolError(toolName, toolInput, input.tool_use_id, errorMsg);
+                      eventBridge.onToolError(
+                        toolName,
+                        resolvedInput,
+                        input.tool_use_id,
+                        errorMsg
+                      );
                       return {
                         continue: true,
                         tool_result: JSON.stringify({
@@ -312,7 +394,17 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
                   }
 
                   // Standard tools - emit events
-                  eventBridge.onToolStart(toolName, toolInput, input.tool_use_id);
+                  eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
+
+                  if (updatedInput) {
+                    return {
+                      continue: true,
+                      hookSpecificOutput: {
+                        hookEventName: "PreToolUse",
+                        updatedInput,
+                      },
+                    };
+                  }
 
                   return { continue: true };
                 },

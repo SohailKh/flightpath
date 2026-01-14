@@ -91,9 +91,10 @@ export async function initializeTargetProject(
   targetPath: string,
   claudeStorageId: string,
   featurePrefix: string = "pipeline",
-  sourceRoot?: string
+  sourceRoot?: string,
+  cleanupSource?: boolean
 ): Promise<void> {
-  const { mkdir, copyFile } = await import("node:fs/promises");
+  const { mkdir, copyFile, unlink, readdir, rmdir } = await import("node:fs/promises");
   const { existsSync } = await import("node:fs");
 
   // Create .claude directory in BACKEND (not in target project)
@@ -108,10 +109,12 @@ export async function initializeTargetProject(
   console.log(`[Orchestrator] Initialized git repository at ${targetPath}`);
 
   const targetSpec = join(claudeDir, "feature-spec.v3.json");
+  const targetSmoke = join(claudeDir, "smoke-tests.json");
+
+  const specRoot = sourceRoot ? resolve(sourceRoot) : FLIGHTPATH_ROOT;
 
   if (!existsSync(targetSpec)) {
     // Copy feature spec from source root to backend .claude storage
-    const specRoot = sourceRoot ? resolve(sourceRoot) : FLIGHTPATH_ROOT;
     const sourceSpec = join(specRoot, ".claude", featurePrefix, "feature-spec.v3.json");
 
     if (existsSync(sourceSpec)) {
@@ -119,6 +122,51 @@ export async function initializeTargetProject(
       console.log(`[Orchestrator] Copied feature spec to ${targetSpec}`);
     } else {
       console.warn(`[Orchestrator] Feature spec not found at ${sourceSpec}`);
+    }
+  }
+
+  if (!existsSync(targetSmoke)) {
+    const sourceSmoke = join(specRoot, ".claude", featurePrefix, "smoke-tests.json");
+    if (existsSync(sourceSmoke)) {
+      await copyFile(sourceSmoke, targetSmoke);
+      console.log(`[Orchestrator] Copied smoke tests to ${targetSmoke}`);
+    }
+  }
+
+  if (cleanupSource && sourceRoot) {
+    const sourceFeatureDir = join(specRoot, ".claude", featurePrefix);
+    const filesToRemove = [
+      join(sourceFeatureDir, "feature-spec.v3.json"),
+      join(sourceFeatureDir, "smoke-tests.json"),
+    ];
+
+    for (const filePath of filesToRemove) {
+      if (existsSync(filePath)) {
+        try {
+          await unlink(filePath);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    }
+
+    try {
+      if (existsSync(sourceFeatureDir)) {
+        const entries = await readdir(sourceFeatureDir);
+        if (entries.length === 0) {
+          await rmdir(sourceFeatureDir);
+        }
+      }
+
+      const sourceClaudeRoot = join(specRoot, ".claude");
+      if (existsSync(sourceClaudeRoot)) {
+        const rootEntries = await readdir(sourceClaudeRoot);
+        if (rootEntries.length === 0) {
+          await rmdir(sourceClaudeRoot);
+        }
+      }
+    } catch {
+      // Ignore cleanup errors
     }
   }
 }

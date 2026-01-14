@@ -87,7 +87,14 @@ describe("generateTargetProjectPath", () => {
 describe("initializeTargetProject", () => {
   it("creates directories, initializes git, and copies spec", async () => {
     const targetPath = "/tmp/target-project";
-    const claudeDir = join(targetPath, ".claude", "pipeline");
+    const claudeStorageId = "test-storage";
+    const claudeDir = join(
+      projectInit.FLIGHTPATH_ROOT,
+      "backend",
+      ".claude",
+      claudeStorageId,
+      "pipeline"
+    );
     const targetSpec = join(claudeDir, "feature-spec.v3.json");
     const sourceSpec = join(
       projectInit.FLIGHTPATH_ROOT,
@@ -101,7 +108,7 @@ describe("initializeTargetProject", () => {
     targetSpecExists = false;
     sourceSpecExists = true;
 
-    await projectInit.initializeTargetProject(targetPath);
+    await projectInit.initializeTargetProject(targetPath, claudeStorageId);
 
     expect(mkdir).toHaveBeenCalledWith(claudeDir, { recursive: true });
 

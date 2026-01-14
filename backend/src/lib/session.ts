@@ -26,6 +26,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { loadProjectConfig, generateProjectContext } from "./project-config";
+import { rewriteClaudeCommand, rewriteClaudeFilePath } from "./claude-paths";
 import type { AgentName, ToolEventCallbacks, AskUserQuestion } from "./agent";
 
 // Flightpath root directory - resolved at module load time
@@ -49,6 +50,8 @@ export interface V2SessionOptions {
   agentName: AgentName;
   /** Path to target project for context injection */
   targetProjectPath?: string;
+  /** Storage ID for centralized .claude paths */
+  claudeStorageId?: string;
   /** Treat target as a new project (skip file ops) */
   isNewProject?: boolean;
   /** Callbacks for tool activity events */
@@ -248,9 +251,10 @@ function shouldRewritePath(value: string): boolean {
   return true;
 }
 
-function rewriteBashCommand(command: string, cwd: string): string {
+function rewriteBashCommand(command: string, cwd?: string): string {
   const trimmed = command.trim();
   if (!trimmed) return command;
+  if (!cwd) return command;
   const safeCwd = cwd.replace(/"/g, '\\"');
   return `cd "${safeCwd}" && ${command}`;
 }
@@ -258,9 +262,10 @@ function rewriteBashCommand(command: string, cwd: string): string {
 function resolveToolInput(
   toolName: string,
   toolInput: unknown,
-  cwd?: string
+  cwd?: string,
+  claudeStorageId?: string
 ): { resolvedInput: unknown; updatedInput?: Record<string, unknown> } {
-  if (!cwd || !toolInput || typeof toolInput !== "object") {
+  if (!toolInput || typeof toolInput !== "object") {
     return { resolvedInput: toolInput };
   }
 
@@ -271,7 +276,8 @@ function resolveToolInput(
   const updatePathKey = (key: string) => {
     const raw = input[key];
     if (typeof raw !== "string" || !shouldRewritePath(raw)) return;
-    const resolved = resolveUserPath(raw, cwd);
+    const claudeRewritten = rewriteClaudeFilePath(raw, claudeStorageId);
+    const resolved = cwd ? resolveUserPath(claudeRewritten, cwd) : claudeRewritten;
     if (resolved !== raw) {
       next[key] = resolved;
       updated = true;
@@ -298,9 +304,10 @@ function resolveToolInput(
     case "Bash": {
       const rawCommand = input.command;
       if (typeof rawCommand === "string") {
-        const rewritten = rewriteBashCommand(rawCommand, cwd);
-        if (rewritten !== rawCommand) {
-          next.command = rewritten;
+        const claudeRewritten = rewriteClaudeCommand(rawCommand, claudeStorageId);
+        const wrapped = rewriteBashCommand(claudeRewritten, cwd);
+        if (wrapped !== rawCommand) {
+          next.command = wrapped;
           updated = true;
         }
       }
@@ -329,7 +336,8 @@ function buildHooks(
   userQuestions: AskUserQuestion[],
   seenQuestionKeys: Set<string>,
   setRequiresUserInput: (value: boolean) => void,
-  sessionCwd?: string
+  sessionCwd?: string,
+  claudeStorageId?: string
 ): Partial<Record<HookEvent, HookCallbackMatcher[]>> | undefined {
   const preToolUseHook = async (
     input: HookInput,
@@ -344,7 +352,8 @@ function buildHooks(
     const { resolvedInput, updatedInput } = resolveToolInput(
       preInput.tool_name,
       preInput.tool_input,
-      sessionCwd
+      sessionCwd,
+      claudeStorageId
     );
 
     toolStartTimes.set(preInput.tool_use_id, Date.now());
@@ -486,6 +495,7 @@ export async function createV2Session(
   const {
     agentName,
     targetProjectPath,
+    claudeStorageId,
     isNewProject,
     toolCallbacks,
     modelOverride,
@@ -559,7 +569,8 @@ When writing files (like feature-spec.v3.json), use this as the base path.
       userQuestions,
       seenQuestionKeys,
       setRequiresUserInput,
-      sessionCwd
+      sessionCwd,
+      claudeStorageId
     ),
   });
 
@@ -651,6 +662,7 @@ export async function resumeV2Session(
   const sessionCwd = targetProjectPath
     ? resolveUserPath(targetProjectPath, process.cwd())
     : undefined;
+  const claudeStorageId = options.claudeStorageId;
 
   // Determine effective model
   const frontmatter = await parseAgentFrontmatter(agentName);
@@ -692,7 +704,8 @@ export async function resumeV2Session(
       userQuestions,
       seenQuestionKeys,
       setRequiresUserInput,
-      sessionCwd
+      sessionCwd,
+      claudeStorageId
     ),
   });
 

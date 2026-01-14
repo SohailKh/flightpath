@@ -74,7 +74,8 @@ async function clearFeatureSpecs(rootPath?: string): Promise<void> {
 async function getOrCreateSession(
   pipelineId: string,
   targetProjectPath?: string,
-  isNewProject?: boolean
+  isNewProject?: boolean,
+  claudeStorageId?: string
 ): Promise<V2Session> {
   // Check if we have an active session in memory
   let session = activeSessions.get(pipelineId);
@@ -93,6 +94,7 @@ async function getOrCreateSession(
     session = await resumeV2Session(existingSessionId, {
       agentName: "feature-qa",
       targetProjectPath,
+      claudeStorageId,
       isNewProject,
       toolCallbacks,
       modelOverride: "opus",
@@ -110,6 +112,7 @@ async function getOrCreateSession(
     session = await createV2Session({
       agentName: "feature-qa",
       targetProjectPath,
+      claudeStorageId,
       isNewProject,
       toolCallbacks,
       modelOverride: "opus",
@@ -201,7 +204,12 @@ export async function runQAPhase(
     });
 
     // Get or create V2 session
-    const session = await getOrCreateSession(pipelineId, resolvedTargetPath, isNewProject);
+    const session = await getOrCreateSession(
+      pipelineId,
+      resolvedTargetPath,
+      isNewProject,
+      pipeline.claudeStorageId
+    );
 
     // Emit system prompt for debugging
     appendEvent(pipelineId, "agent_prompt", {
@@ -299,7 +307,8 @@ export async function handleUserMessage(
     const session = await getOrCreateSession(
       pipelineId,
       pipeline.targetProjectPath,
-      pipeline.isNewProject ?? false
+      pipeline.isNewProject ?? false,
+      pipeline.claudeStorageId
     );
 
     // Send message - V2 session automatically maintains conversation history
@@ -477,7 +486,13 @@ async function onQAComplete(
   setTargetProjectPath(pipelineId, targetPath);
 
   // Create target directory (WITHOUT .claude) and copy feature spec to backend/.claude storage
-  await initializeTargetProject(targetPath, claudeStorageId, featurePrefix, specRoot);
+  await initializeTargetProject(
+    targetPath,
+    claudeStorageId,
+    featurePrefix,
+    specRoot,
+    pipeline?.isNewProject ?? false
+  );
 
   appendEvent(pipelineId, "target_project_set", {
     projectName,
