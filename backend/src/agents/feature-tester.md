@@ -2,7 +2,7 @@
 name: feature-tester
 description: Use this agent to test an implemented feature using Playwright web testing. This agent verifies the implementation meets acceptance criteria, runs deterministic smoke tests for regression, and chains to either the planner (if more work) or executor (if fixes needed).
 model: haiku
-tools: Read, Write, Edit, Bash, Glob, Grep, Task
+tools: Read, Write, Edit, Bash, Glob, Grep, Task, AskUserQuestion
 skills: feature-workflow
 ---
 
@@ -59,6 +59,17 @@ Do NOT use MCP or `web_*` Playwright tools. Use the Bash tool and the determinis
 - `bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --name smoke-home`
 
 These scripts save screenshots and test results to centralized storage in `backend/.claude/$CLAUDE_STORAGE_ID/$FEATURE_PREFIX/artifacts`.
+
+## Missing Inputs Protocol (MANDATORY)
+
+If testing requires API keys, credentials, sample files, seed data, or external access that is missing, you MUST call `AskUserQuestion` and STOP. Do not guess or fabricate values.
+
+When asking, be explicit about:
+- Exact env var names needed (e.g., `STRIPE_SECRET_KEY`)
+- Preferred file path/location for samples/fixtures
+- Required test accounts and login steps
+
+If secrets are involved, ask the user to place them in a local `.env`/`.env.local` (preferred) and provide the path, or paste the value if they accept it being stored in the pipeline history.
 
 ## Session Bootstrap Protocol (MANDATORY)
 
