@@ -37,18 +37,33 @@ export function isTelegramChatAllowed(chatId: string | number): boolean {
 function formatQuestionBlock(question: AskUserQuestion, index: number): string {
   const lines: string[] = [];
   const header = question.header || `Question ${index + 1}`;
-  lines.push(`${index + 1}) ${header}`);
+  const selectionHint = question.options?.length
+    ? question.multiSelect
+      ? "Select one or more"
+      : "Select one"
+    : "Reply with your answer";
+  lines.push(`${index + 1}) ${header} (${selectionHint})`);
   if (question.question) {
     lines.push(question.question);
   }
   if (question.options?.length) {
-    lines.push("Options:");
-    for (const option of question.options) {
+    const optionKeys = question.options.map((_, optionIndex) =>
+      formatOptionKey(optionIndex)
+    );
+    lines.push(`Choices: ${optionKeys.join(", ")}`);
+    for (const [optionIndex, option] of question.options.entries()) {
       const detail = option.description ? ` - ${option.description}` : "";
-      lines.push(`- ${option.label}${detail}`);
+      lines.push(`${formatOptionKey(optionIndex)}) ${option.label}${detail}`);
     }
   }
   return lines.join("\n");
+}
+
+function formatOptionKey(index: number): string {
+  if (index < 26) {
+    return String.fromCharCode(65 + index);
+  }
+  return `#${index + 1}`;
 }
 
 function formatQuestionMessage(
@@ -58,7 +73,8 @@ function formatQuestionMessage(
 ): string {
   const lines: string[] = [];
   const phaseLabel = phase ? `, phase: ${phase}` : "";
-  lines.push(`[Flightpath] Input needed (pipeline ${pipelineId}${phaseLabel})`);
+  const shortId = pipelineId.slice(0, 8);
+  lines.push(`[Flightpath] Input needed (pipeline ${shortId}${phaseLabel})`);
   lines.push("");
   if (questions.length === 0) {
     lines.push("The agent requested input, but no questions were provided.");
@@ -68,10 +84,20 @@ function formatQuestionMessage(
       lines.push("");
     });
   }
-  lines.push("Reply to this message with your answers.");
-  lines.push(
-    "For multiple questions, use `Header: answer` format. For files, include the path and confirm when ready."
-  );
+  if (questions.length > 0) {
+    lines.push("Reply format:");
+    const templateLines = questions.map((question, index) => {
+      const optionLabels = question.options?.length
+        ? question.options.map((_, optionIndex) => formatOptionKey(optionIndex)).join(",")
+        : "text";
+      const multiHint = question.multiSelect ? " (multi)" : "";
+      return `${index + 1}=${optionLabels}${multiHint}`;
+    });
+    lines.push(templateLines.join("\n"));
+  }
+  lines.push("");
+  lines.push("Use commas for multi-select answers, e.g. `2=A,C`.");
+  lines.push("For file requests, reply with the path and say when it's ready.");
 
   const text = lines.join("\n").trim();
   if (text.length <= MAX_MESSAGE_LENGTH) {
