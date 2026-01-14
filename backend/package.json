@@ -2,7 +2,7 @@
   "name": "src",
   "type": "module",
   "scripts": {
-    "dev": "npx tsx --watch src/index.ts",
+    "dev": "NODE_OPTIONS=--env-file=.env npx tsx --watch src/index.ts",
     "dev:bun": "bun run --watch src/index.ts",
     "dev:wrangler": "wrangler dev",
     "deploy": "wrangler deploy --minify",
