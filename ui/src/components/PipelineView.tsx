@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import type { Pipeline, PipelineEvent, PipelineStatus } from "../types";
+import type { Pipeline, PipelineEvent, PipelineStatus, TokenUsageData } from "../types";
 import {
   getPipeline,
   subscribeToPipelineEvents,
@@ -114,6 +114,21 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
     pipeline.status === "failed" ||
     pipeline.status === "aborted";
 
+  // Aggregate token usage from all token_usage events
+  const totalTokens = useMemo(() => {
+    const tokenEvents = events.filter((e) => e.type === "token_usage");
+    let input = 0,
+      output = 0,
+      cost = 0;
+    for (const event of tokenEvents) {
+      const data = event.data as TokenUsageData;
+      input += data.inputTokens ?? 0;
+      output += data.outputTokens ?? 0;
+      cost += data.totalCostUsd ?? 0;
+    }
+    return { input, output, cost };
+  }, [events]);
+
   return (
     <div className="flex flex-col h-full gap-4">
       {/* Header with status and controls */}
@@ -128,6 +143,12 @@ export function PipelineView({ pipelineId, onClose }: PipelineViewProps) {
               {new Date(pipeline.createdAt).toLocaleString()}
             </p>
           </div>
+          {(totalTokens.input > 0 || totalTokens.output > 0) && (
+            <div className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded font-mono">
+              {(totalTokens.input + totalTokens.output).toLocaleString()} tokens
+              {totalTokens.cost > 0 && ` · $${totalTokens.cost.toFixed(2)}`}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* Go button - for orphaned pipelines (e.g., after server restart) */}
