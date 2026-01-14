@@ -64,6 +64,7 @@ export type PipelineEventType =
   | "servers_stopped"
   // Control
   | "retry_started"
+  | "rate_limit_retry"
   | "paused"
   | "resumed"
   | "aborted"

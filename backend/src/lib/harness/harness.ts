@@ -40,6 +40,7 @@ import { saveScreenshot } from "../artifacts";
 import { rewriteClaudeCommand, rewriteClaudeFilePath } from "../claude-paths";
 import { FLIGHTPATH_ROOT, parseRequirementsFromSpec } from "../orchestrator/project-init";
 import { notifyTelegramQuestions } from "../telegram";
+import { categorizeErrorWithDetails } from "../parallel-explorer";
 
 /**
  * Harness configuration
@@ -51,6 +52,12 @@ export interface HarnessConfig {
   model?: string;
   maxTurns?: number; // Safety valve, default 500
   enablePlaywright?: boolean;
+  /** Enable automatic retry on rate limit errors (default: true) */
+  retryOnRateLimit?: boolean;
+  /** Backoff duration between retries in ms (default: 30 minutes) */
+  rateLimitBackoffMs?: number;
+  /** Maximum number of retries (default: 20, ~10 hours) */
+  maxRetries?: number;
 }
 
 /**
@@ -152,6 +159,9 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
     model = "opus",
     maxTurns = 500,
     enablePlaywright = true,
+    retryOnRateLimit = true,
+    rateLimitBackoffMs = 30 * 60 * 1000, // 30 minutes
+    maxRetries = 20, // ~10 hours of retrying
   } = config;
 
   const pipeline = getPipeline(pipelineId);
@@ -176,6 +186,7 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
 
   console.log(`[Harness] Starting with ${requirements.length} requirements`);
   console.log(`[Harness] Model: ${model}, MaxTurns: ${maxTurns}, Playwright: ${enablePlaywright}`);
+  console.log(`[Harness] Rate limit retry: ${retryOnRateLimit ? `enabled (${maxRetries} retries, ${rateLimitBackoffMs / 60000}min backoff)` : "disabled"}`);
 
   // Mark pipeline as running
   markRunning(pipelineId);
@@ -295,6 +306,20 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
     await initBrowser();
   }
 
+  // Helper to sleep with abort checking
+  const sleepWithAbortCheck = async (ms: number, checkIntervalMs = 5000): Promise<boolean> => {
+    const endTime = Date.now() + ms;
+    while (Date.now() < endTime) {
+      if (isAbortRequested(pipelineId)) {
+        return true; // Aborted
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(checkIntervalMs, endTime - Date.now())));
+    }
+    return false; // Not aborted
+  };
+
+  let retryCount = 0;
+
   try {
     // Load and build prompt
     const fullPrompt = buildPrompt(
@@ -315,8 +340,11 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
       statusSource: "system",
     });
 
-    // Run the agent
-    const q = query({
+    // Retry loop for rate limit recovery
+    while (true) {
+      try {
+        // Run the agent
+        const q = query({
       prompt: fullPrompt,
       options: {
         maxTurns,
@@ -625,6 +653,63 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
             }
           }
         }
+      }
+    }
+
+        // Agent completed (success or handled error), exit retry loop
+        break;
+      } catch (error) {
+        // Check if this is a retryable error (rate limit, transient)
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorInfo = categorizeErrorWithDetails(errorMsg);
+
+        if (retryOnRateLimit && errorInfo.retryable && retryCount < maxRetries) {
+          retryCount++;
+          const backoffMinutes = Math.round(rateLimitBackoffMs / 60000);
+          const resumeAt = new Date(Date.now() + rateLimitBackoffMs).toISOString();
+
+          console.log(`[Harness] Rate limit hit, retry ${retryCount}/${maxRetries} in ${backoffMinutes}min`);
+          console.log(`[Harness] Error: ${errorMsg}`);
+          console.log(`[Harness] Will resume at: ${resumeAt}`);
+
+          appendEvent(pipelineId, "rate_limit_retry", {
+            retryCount,
+            maxRetries,
+            backoffMs: rateLimitBackoffMs,
+            resumeAt,
+            error: errorMsg,
+            errorType: errorInfo.type,
+          });
+
+          // Wait with abort checking
+          const wasAborted = await sleepWithAbortCheck(rateLimitBackoffMs);
+          if (wasAborted) {
+            aborted = true;
+            console.log(`[Harness] Aborted during rate limit backoff`);
+            break;
+          }
+
+          console.log(`[Harness] Resuming after rate limit backoff (attempt ${retryCount})`);
+          appendEvent(pipelineId, "status_update", {
+            action: `Resuming after rate limit (attempt ${retryCount}/${maxRetries})...`,
+            statusSource: "system",
+          });
+
+          // Continue the while loop to retry
+          continue;
+        }
+
+        // Non-retryable error or max retries exceeded
+        console.error(`[Harness] Non-retryable error or max retries exceeded: ${errorMsg}`);
+        appendEvent(pipelineId, "agent_error_detail", {
+          error: errorMsg,
+          subtype: "error_during_execution",
+          errorType: errorInfo.type,
+          retryable: errorInfo.retryable,
+          retryCount,
+          totalTurns,
+        });
+        throw error;
       }
     }
   } finally {
