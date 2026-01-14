@@ -29,6 +29,7 @@ import { loadProjectConfig, generateProjectContext } from "./project-config";
 import { rewriteClaudeCommand, rewriteClaudeFilePath } from "./claude-paths";
 import type { AgentName, ToolEventCallbacks, AskUserQuestion } from "./agent";
 import { notifyTelegramQuestions } from "./telegram";
+import { ensureLocalClaudeForToolInput, ensureProjectClaudeLayout } from "./claude-scaffold";
 
 // Flightpath root directory - resolved at module load time
 const FLIGHTPATH_ROOT = resolve(import.meta.dirname, "..", "..");
@@ -195,7 +196,8 @@ function mapModelName(shortName?: string): string {
  */
 function formatStatusAction(toolName: string, input: unknown): string {
   const args = input as Record<string, unknown>;
-  switch (toolName) {
+  const normalizedToolName = normalizeWorkflowToolName(toolName);
+  switch (normalizedToolName) {
     case "Read":
       return `Reading ${truncatePath(String(args.file_path || ""))}`;
     case "Edit":
@@ -216,8 +218,18 @@ function formatStatusAction(toolName: string, input: unknown): string {
       if (questions?.[0]?.header) return `Asking: ${questions[0].header}`;
       return "Asking user...";
     }
+    case "start_requirement":
+      return `Starting requirement: ${args.id}`;
+    case "complete_requirement":
+      return `Completed requirement: ${args.id}`;
+    case "fail_requirement":
+      return `Failed requirement: ${args.id}`;
+    case "update_status":
+      return `Status: ${args.id} -> ${args.status}`;
+    case "log_progress":
+      return String(args.message || "Progress update");
     default:
-      return `${toolName}...`;
+      return `${normalizedToolName}...`;
   }
 }
 
@@ -230,6 +242,12 @@ function truncatePath(path: string): string {
 function truncateStr(str: string, len: number): string {
   if (!str) return "";
   return str.length > len ? str.slice(0, len - 3) + "..." : str;
+}
+
+function normalizeWorkflowToolName(toolName: string): string {
+  return toolName.startsWith("mcp__workflow__")
+    ? toolName.replace("mcp__workflow__", "")
+    : toolName;
 }
 
 function resolveUserPath(value: string, cwd: string): string {
@@ -358,6 +376,12 @@ function buildHooks(
       preInput.tool_input,
       sessionCwd,
       claudeStorageId
+    );
+
+    await ensureLocalClaudeForToolInput(
+      preInput.tool_name,
+      resolvedInput,
+      sessionCwd
     );
 
     toolStartTimes.set(preInput.tool_use_id, Date.now());
@@ -517,6 +541,10 @@ export async function createV2Session(
   const frontmatter = await parseAgentFrontmatter(agentName);
   const declaredModel = frontmatter.model as string | undefined;
   const effectiveModel = mapModelName(modelOverride || declaredModel);
+
+  if (targetProjectPath) {
+    await ensureProjectClaudeLayout(targetProjectPath);
+  }
 
   // Load system prompt - will be embedded in first message
   let systemPrompt = await loadAgentPrompt(agentName, targetProjectPath);
@@ -683,6 +711,10 @@ export async function resumeV2Session(
   const frontmatter = await parseAgentFrontmatter(agentName);
   const declaredModel = frontmatter.model as string | undefined;
   const effectiveModel = mapModelName(modelOverride || declaredModel);
+
+  if (targetProjectPath) {
+    await ensureProjectClaudeLayout(targetProjectPath);
+  }
 
   console.log(
     `[Session] Resuming V2 session ${sessionId.slice(0, 8)}... for ${agentName}`

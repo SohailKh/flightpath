@@ -27,6 +27,12 @@ function truncateStr(str: string, len: number): string {
   return str.length > len ? str.slice(0, len - 3) + "..." : str;
 }
 
+function normalizeWorkflowToolName(toolName: string): string {
+  return toolName.startsWith("mcp__workflow__")
+    ? toolName.replace("mcp__workflow__", "")
+    : toolName;
+}
+
 /**
  * Pass through tool result without truncation for full visibility
  */
@@ -39,7 +45,8 @@ function passResult(result: unknown): unknown {
  */
 function formatStatusAction(toolName: string, input: unknown): string {
   const args = input as Record<string, unknown>;
-  switch (toolName) {
+  const normalizedToolName = normalizeWorkflowToolName(toolName);
+  switch (normalizedToolName) {
     case "Read":
       return `Reading ${truncatePath(String(args.file_path || ""))}`;
     case "Edit":
@@ -74,13 +81,15 @@ function formatStatusAction(toolName: string, input: unknown): string {
     }
     // Workflow tools
     case "start_requirement":
-      return `Starting requirement: ${args.requirementId}`;
+      return `Starting requirement: ${args.id}`;
     case "complete_requirement":
-      return `Completed requirement: ${args.requirementId}`;
+      return `Completed requirement: ${args.id}`;
     case "fail_requirement":
-      return `Failed requirement: ${args.requirementId}`;
+      return `Failed requirement: ${args.id}`;
     case "update_status":
-      return String(args.message || "Working...");
+      return `Status: ${args.id} -> ${args.status}`;
+    case "log_progress":
+      return String(args.message || "Progress update");
     // Playwright tools
     case "web_navigate":
       return `Navigating to ${truncateStr(String(args.url || ""), 40)}`;
@@ -122,6 +131,8 @@ const WORKFLOW_TOOLS = [
   "complete_requirement",
   "fail_requirement",
   "update_status",
+  "log_progress",
+  "get_requirements",
 ];
 
 /**
@@ -168,7 +179,7 @@ export class EventBridge {
    * Check if a tool is a workflow tool
    */
   isWorkflowTool(toolName: string): boolean {
-    return WORKFLOW_TOOLS.includes(toolName);
+    return WORKFLOW_TOOLS.includes(normalizeWorkflowToolName(toolName));
   }
 
   /**
@@ -279,35 +290,45 @@ export class EventBridge {
     switch (toolName) {
       case "start_requirement":
         appendEvent(this.pipelineId, "requirement_started", {
-          requirementId: input.requirementId,
-          approach: input.approach,
+          requirementId: input.id,
+          note: input.note,
         });
-        return `Started working on requirement ${input.requirementId}`;
+        return `Started working on requirement ${input.id}`;
 
       case "complete_requirement":
         appendEvent(this.pipelineId, "requirement_completed", {
-          requirementId: input.requirementId,
-          summary: input.summary,
-          filesModified: input.filesModified,
+          requirementId: input.id,
+          note: input.note,
         });
-        return `Marked requirement ${input.requirementId} as completed`;
+        return `Marked requirement ${input.id} as completed`;
 
       case "fail_requirement":
         appendEvent(this.pipelineId, "requirement_failed", {
-          requirementId: input.requirementId,
+          requirementId: input.id,
           reason: input.reason,
-          blockedBy: input.blockedBy,
         });
-        return `Marked requirement ${input.requirementId} as failed: ${input.reason}`;
+        return `Marked requirement ${input.id} as failed: ${input.reason}`;
 
       case "update_status":
         appendEvent(this.pipelineId, "status_update", {
-          action: String(input.message),
+          action: String(input.note || "Working..."),
+          requirementId: input.id,
+          requirementStatus: input.status,
           inferredPhase: this.currentPhase,
           agentName: this.agentName,
           statusSource: "workflow",
         });
         return "Status updated";
+      case "log_progress":
+        appendEvent(this.pipelineId, "status_update", {
+          action: String(input.message || "Progress update"),
+          requirementId: input.requirementId,
+          level: input.level,
+          inferredPhase: this.currentPhase,
+          agentName: this.agentName,
+          statusSource: "workflow",
+        });
+        return "Progress logged";
 
       default:
         return `Unknown workflow tool: ${toolName}`;

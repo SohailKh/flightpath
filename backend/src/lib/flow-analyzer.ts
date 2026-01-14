@@ -5,6 +5,7 @@
 
 import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Pipeline, PipelineEvent, Requirement } from "./pipeline";
+import { buildClaudeCodeOptions, createPromptStream } from "./claude-query";
 
 export interface AnalysisMetadata {
   analyzedAt: string;
@@ -373,31 +374,36 @@ ${implementationSection || "See the full analysis for improvement suggestions."}
 async function runAnalysisAgent(prompt: string): Promise<string> {
   let resultText = "";
 
+  const promptStream = createPromptStream(prompt);
   const q = query({
-    prompt,
-    options: {
+    prompt: promptStream.prompt,
+    options: buildClaudeCodeOptions({
       maxTurns: 1,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
-      tools: [],
-    },
+      systemPromptAppend: "Analysis mode. Respond directly without calling tools.",
+    }),
   });
 
-  for await (const msg of q) {
-    if (msg.type === "result") {
-      const result = msg as SDKResultMessage;
-      if (result.subtype === "success") {
-        resultText = result.result;
-      } else {
-        throw new Error(
-          `Analysis agent error: ${result.subtype}${
-            "errors" in result ? ` - ${result.errors.join(", ")}` : ""
-          }`
-        );
+  try {
+    for await (const msg of q) {
+      if (msg.type === "result") {
+        promptStream.close();
+        const result = msg as SDKResultMessage;
+        if (result.subtype === "success") {
+          resultText = result.result;
+        } else {
+          throw new Error(
+            `Analysis agent error: ${result.subtype}${
+              "errors" in result ? ` - ${result.errors.join(", ")}` : ""
+            }`
+          );
+        }
       }
     }
+  } finally {
+    promptStream.close();
   }
-
   return resultText || "No analysis generated.";
 }
 

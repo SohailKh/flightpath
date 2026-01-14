@@ -12,6 +12,7 @@ let targetSpecPath = "";
 let readFileContent = "";
 const mkdir = jest.fn(async () => {});
 const copyFile = jest.fn(async () => {});
+const writeFile = jest.fn(async () => {});
 const execCalls: Array<{ cmd: string; options?: Record<string, unknown> }> = [];
 let execError: Error | null = null;
 let execStdout = "";
@@ -44,6 +45,7 @@ mock.module("node:fs/promises", () => ({
   readFile: async () => readFileContent,
   mkdir,
   copyFile,
+  writeFile,
 }));
 
 mock.module("node:child_process", () => ({ exec }));

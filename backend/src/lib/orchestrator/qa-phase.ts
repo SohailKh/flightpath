@@ -487,7 +487,7 @@ async function onQAComplete(
 
   setTargetProjectPath(pipelineId, targetPath);
 
-  // Create target directory (WITHOUT .claude) and copy feature spec to backend/.claude storage
+  // Create target directory and copy feature spec to backend/.claude storage
   await initializeTargetProject(
     targetPath,
     claudeStorageId,

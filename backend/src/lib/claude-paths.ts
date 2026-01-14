@@ -9,6 +9,14 @@ import { resolve, join } from "node:path";
 export const BACKEND_ROOT = resolve(import.meta.dirname, "..", "..");
 export const CLAUDE_STORAGE_ROOT = join(BACKEND_ROOT, ".claude");
 const CLAUDE_DIR_NAME = ".claude";
+const CLAUDE_SETTINGS_PATHS = [
+  "/.claude/skills/",
+  "/.claude/rules/",
+  "/.claude/CLAUDE.md",
+  "/.claude/CLAUDE.local.md",
+  "/.claude/settings.json",
+  "/.claude/settings.local.json",
+];
 
 /**
  * Generate a unique storage ID for a pipeline
@@ -59,11 +67,39 @@ function normalizePath(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
+function isClaudeSettingsPath(value: string): boolean {
+  const normalized = normalizePath(value);
+  if (
+    normalized.startsWith(".claude/skills/") ||
+    normalized.startsWith(".claude/rules/") ||
+    normalized === ".claude/CLAUDE.md" ||
+    normalized === ".claude/CLAUDE.local.md" ||
+    normalized === ".claude/settings.json" ||
+    normalized === ".claude/settings.local.json"
+  ) {
+    return true;
+  }
+  return CLAUDE_SETTINGS_PATHS.some((pattern) => normalized.includes(pattern));
+}
+
+function commandTouchesClaudeSettings(command: string): boolean {
+  const normalized = normalizePath(command);
+  return (
+    normalized.includes(".claude/skills/") ||
+    normalized.includes(".claude/rules/") ||
+    normalized.includes(".claude/CLAUDE.md") ||
+    normalized.includes(".claude/CLAUDE.local.md") ||
+    normalized.includes(".claude/settings.json") ||
+    normalized.includes(".claude/settings.local.json")
+  );
+}
+
 export function rewriteClaudeFilePath(
   value: string,
   claudeStorageId?: string
 ): string {
   if (!value) return value;
+  if (isClaudeSettingsPath(value)) return value;
   const storageRoot = getClaudeStorageRoot(claudeStorageId);
   if (!storageRoot) return value;
 
@@ -92,6 +128,7 @@ export function rewriteClaudeCommand(
   claudeStorageId?: string
 ): string {
   if (!command) return command;
+  if (commandTouchesClaudeSettings(command)) return command;
   const storageRoot = getClaudeStorageRoot(claudeStorageId);
   if (!storageRoot) return command;
 

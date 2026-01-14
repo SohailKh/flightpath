@@ -6,12 +6,5 @@
 
 export { runHarness, type HarnessConfig, type HarnessResult } from "./harness";
 export { EventBridge } from "./event-bridge";
-export {
-  isWorkflowTool,
-  handleWorkflowTool,
-  areAllRequirementsProcessed,
-  getRequirementsSummary,
-  WORKFLOW_TOOL_DEFINITIONS,
-  WORKFLOW_TOOL_NAMES,
-  type WorkflowToolName,
-} from "./workflow-tools";
+export { areAllRequirementsProcessed, getRequirementsSummary } from "./requirements";
+export { createWorkflowMcpServer } from "./workflow-mcp";

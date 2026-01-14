@@ -512,7 +512,8 @@ export function addFailedRequirement(
 
 /**
  * Set the target project path (where generated code will be written)
- * Note: .claude files are stored in backend/.claude/{claudeStorageId}/, not in the target project
+ * Note: pipeline artifacts live in backend/.claude/{claudeStorageId}/, while
+ * project settings/skills live under the target project's .claude/.
  */
 export function setTargetProjectPath(
   pipelineId: string,

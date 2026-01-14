@@ -112,6 +112,22 @@ bun test
 # Or: cd backend && bun test
 ```
 
+## Claude Context Packs
+
+Flightpath seeds each target project with Claude Code context packs:
+
+- `.claude/CLAUDE.md` for repo-level guidance
+- `.claude/rules/*.md` for modular rules
+- `.claude/skills/*/SKILL.md` for global topic skills (ux, auth, patterns, testing)
+
+To add a skill, create `.claude/skills/<skill-name>/SKILL.md` with YAML
+frontmatter (`name`, `description`), then keep instructions and examples short.
+
+Directory-specific guidance is created on demand. When the agent reads/edits/writes
+files, it will create a `CLAUDE.local.md` at the nearest package root (detected
+via common manifests like `package.json` or `pyproject.toml`). Fill in the
+placeholders for commands, conventions, and footguns.
+
 ## API Reference
 
 See [backend/README.md](backend/README.md) for API documentation.

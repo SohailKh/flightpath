@@ -22,25 +22,21 @@ import {
   type Requirement,
 } from "../pipeline";
 import { EventBridge } from "./event-bridge";
-import {
-  isWorkflowTool,
-  handleWorkflowTool,
-  areAllRequirementsProcessed,
-  getRequirementsSummary,
-  WORKFLOW_TOOL_DEFINITIONS,
-  type WorkflowToolName,
-} from "./workflow-tools";
+import { areAllRequirementsProcessed, getRequirementsSummary } from "./requirements";
+import { createWorkflowMcpServer } from "./workflow-mcp";
+import { writeRequirementsSnapshot } from "./requirements-store";
 import {
   initBrowser,
   closeBrowser,
   executePlaywrightTool,
-  formatPlaywrightToolsForPrompt,
 } from "../playwright-tools";
 import { saveScreenshot } from "../artifacts";
 import { rewriteClaudeCommand, rewriteClaudeFilePath } from "../claude-paths";
-import { FLIGHTPATH_ROOT, parseRequirementsFromSpec } from "../orchestrator/project-init";
+import { parseRequirementsFromSpec } from "../orchestrator/project-init";
 import { notifyTelegramQuestions } from "../telegram";
 import { categorizeErrorWithDetails } from "../parallel-explorer";
+import { buildClaudeCodeOptions, createPromptStream } from "../claude-query";
+import { ensureLocalClaudeForToolInput, ensureProjectClaudeLayout } from "../claude-scaffold";
 
 /**
  * Harness configuration
@@ -72,53 +68,45 @@ export interface HarnessResult {
   aborted: boolean;
 }
 
+const HARNESS_SYSTEM_APPEND = [
+  "Harness mode:",
+  "- Call mcp__workflow__get_requirements before starting work.",
+  "- Use mcp__workflow__start_requirement, mcp__workflow__update_status, mcp__workflow__complete_requirement, mcp__workflow__fail_requirement.",
+  "- Use mcp__workflow__log_progress for notable milestones.",
+].join("\n");
+
+const PLAYWRIGHT_TOOL_SUMMARY =
+  "Playwright tools available: web_navigate, web_click, web_type, web_fill, web_assert_visible, web_assert_text, web_wait, web_screenshot, web_http_request. See /testing for details.";
+
 /**
  * Build the full prompt for the agent
  */
 function buildPrompt(
-  requirements: Requirement[],
   targetProjectPath: string,
   enablePlaywright: boolean,
-  featurePrefix: string,
   claudeStorageId: string,
   userInputs: UserInputEntry[]
 ): string {
-  let prompt = ""
+  let prompt = "";
 
-  // Add workflow tool definitions
-  prompt += WORKFLOW_TOOL_DEFINITIONS + "\n\n";
+  prompt += "## Harness Instructions\n\n";
+  prompt += "- Call `mcp__workflow__get_requirements` before starting.\n";
+  prompt += "- Update status with `mcp__workflow__start_requirement`, `mcp__workflow__update_status`, `mcp__workflow__complete_requirement`, `mcp__workflow__fail_requirement`.\n";
+  prompt += "- Use `mcp__workflow__log_progress` for key milestones.\n";
+  prompt += "- Use `AskUserQuestion` when blocked and batch related questions.\n\n";
 
-  // Add Playwright tools if enabled
   if (enablePlaywright) {
-    prompt += "## Web Testing Tools (Playwright)\n\n";
-    prompt += "You have access to Playwright web testing tools for browser automation:\n\n";
-    prompt += formatPlaywrightToolsForPrompt();
-    prompt += "\n\n";
+    prompt += "## Playwright\n\n";
+    prompt += `${PLAYWRIGHT_TOOL_SUMMARY}\n\n`;
   }
 
-  prompt += "## User Input Protocol\n\n";
-  prompt += "If you need information from the user to continue, call `AskUserQuestion`.\n";
-  prompt += "Only ask questions that are essential to make progress or complete testing, and batch related questions together.\n\n";
-
-  // Add requirements
-  prompt += "## Requirements to Implement\n\n";
-  prompt += "```json\n";
-  prompt += JSON.stringify(requirements, null, 2);
-  prompt += "\n```\n\n";
-
-  // Add working directory
   prompt += `## Working Directory\n\n\`${targetProjectPath}\`\n\n`;
 
-  // Add Claude storage ID for artifact storage
-  prompt += `## Claude Storage ID\n\n\`${claudeStorageId}\`\n\n`;
-  prompt += `Use this ID when running playwright scripts:\n`;
-  prompt += `\`\`\`bash\nCLAUDE_STORAGE_ID="${claudeStorageId}"\n\`\`\`\n\n`;
-
-  // Add Claude logs context
-  prompt += "## Claude Logs\n\n";
-  prompt += `If present, read these for context and treat them as read-only:\n\n`;
-  prompt += `- \`.claude/${featurePrefix}/claude-progress.md\`\n`;
-  prompt += `- \`.claude/${featurePrefix}/events.ndjson\`\n\n`;
+  if (claudeStorageId) {
+    prompt += "## Claude Storage ID\n\n";
+    prompt += `\`${claudeStorageId}\`\n`;
+    prompt += "Set `CLAUDE_STORAGE_ID` when running Playwright scripts.\n\n";
+  }
 
   if (userInputs.length > 0) {
     prompt += "## User Inputs (Most Recent First)\n\n";
@@ -141,9 +129,8 @@ function buildPrompt(
     }
   }
 
-  // Add start instruction
   prompt += "## Start\n\n";
-  prompt += "Begin with the first pending requirement. Call `start_requirement` to begin.\n";
+  prompt += "Fetch requirements first, then begin with the first pending requirement.\n";
 
   return prompt;
 }
@@ -183,6 +170,8 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
     }
   }
   const resolvedFeaturePrefix = featurePrefix || "pipeline";
+
+  await ensureProjectClaudeLayout(targetProjectPath);
 
   console.log(`[Harness] Starting with ${requirements.length} requirements`);
   console.log(`[Harness] Model: ${model}, MaxTurns: ${maxTurns}, Playwright: ${enablePlaywright}`);
@@ -323,10 +312,8 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
   try {
     // Load and build prompt
     const fullPrompt = buildPrompt(
-      requirements,
       targetProjectPath,
       enablePlaywright,
-      resolvedFeaturePrefix,
       pipeline.claudeStorageId || "default",
       pipeline.userInputLog ?? []
     );
@@ -340,199 +327,198 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
       statusSource: "system",
     });
 
+    const workflowServer = createWorkflowMcpServer(pipelineId, eventBridge);
+    await writeRequirementsSnapshot(pipelineId);
+
     // Retry loop for rate limit recovery
     while (true) {
+      let promptStream: ReturnType<typeof createPromptStream> | null = null;
       try {
         // Run the agent
+        promptStream = createPromptStream(fullPrompt);
         const q = query({
-      prompt: fullPrompt,
-      options: {
-        maxTurns,
-        model,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
-        cwd: targetProjectPath,
-        hooks: {
-          PreToolUse: [
-            {
-              hooks: [
-                async (input) => {
-                  if (input.hook_event_name !== "PreToolUse") {
-                    return { continue: true };
-                  }
-
-                  // Check for abort
-                  if (isAbortRequested(pipelineId)) {
-                    aborted = true;
-                    return {
-                      continue: false,
-                      tool_result: "Pipeline aborted by user",
-                    };
-                  }
-
-                  const toolName = input.tool_name;
-                  const { resolvedInput, updatedInput } = rewriteToolInput(
-                    toolName,
-                    input.tool_input
-                  );
-
-                  // Handle workflow tools
-                  if (isWorkflowTool(toolName)) {
-                    const result = handleWorkflowTool(
-                      pipelineId,
-                      toolName as WorkflowToolName,
-                      resolvedInput,
-                      eventBridge
-                    );
-                    return {
-                      continue: true,
-                      tool_result: result,
-                    };
-                  }
-
-                  // Handle TodoWrite for real-time updates
-                  if (toolName === "TodoWrite") {
-                    const todoInput = resolvedInput as { todos?: unknown[] };
-                    if (todoInput?.todos) {
-                      eventBridge.onTodoWrite(todoInput.todos);
-                    }
-                  }
-
-                  if (toolName === "AskUserQuestion") {
-                    const questions = (resolvedInput as { questions?: UserInputEntry["questions"] })
-                      ?.questions;
-                    setUserInputRequest(pipelineId, questions);
-                    appendEvent(pipelineId, "paused", {
-                      reason: "user_input",
-                      questions: questions ?? [],
-                    });
-                    updateStatus(pipelineId, "paused");
-                    pausedForUserInput = true;
-                    void notifyTelegramQuestions(
-                      pipelineId,
-                      questions ?? [],
-                      pipeline.phase.current
-                    );
-                    eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
-                    return {
-                      continue: false,
-                      tool_result:
-                        "Questions have been sent to the user. Please wait for their response before continuing.",
-                    };
-                  }
-
-                  // Handle Playwright tools
-                  if (enablePlaywright && toolName.startsWith("web_")) {
-                    try {
-                      const result = await executePlaywrightTool(
-                        toolName,
-                        resolvedInput as Record<string, unknown>
-                      );
-
-                      if (result.screenshot && Buffer.isBuffer(result.screenshot)) {
-                        await recordScreenshot(
-                          result.screenshot,
-                          toolName,
-                          resolvedInput as Record<string, unknown>
-                        );
+          prompt: promptStream.prompt,
+          options: buildClaudeCodeOptions({
+            maxTurns,
+            model,
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            cwd: targetProjectPath,
+            mcpServers: { workflow: workflowServer },
+            systemPromptAppend: HARNESS_SYSTEM_APPEND,
+            hooks: {
+              PreToolUse: [
+                {
+                  hooks: [
+                    async (input) => {
+                      if (input.hook_event_name !== "PreToolUse") {
+                        return { continue: true };
                       }
 
-                      // Emit tool events
+                      // Check for abort
+                      if (isAbortRequested(pipelineId)) {
+                        aborted = true;
+                        return {
+                          continue: false,
+                          tool_result: "Pipeline aborted by user",
+                        };
+                      }
+
+                      const toolName = input.tool_name;
+                      const { resolvedInput, updatedInput } = rewriteToolInput(
+                        toolName,
+                        input.tool_input
+                      );
+
+                      await ensureLocalClaudeForToolInput(
+                        toolName,
+                        resolvedInput,
+                        targetProjectPath
+                      );
+
+                      // Handle TodoWrite for real-time updates
+                      if (toolName === "TodoWrite") {
+                        const todoInput = resolvedInput as { todos?: unknown[] };
+                        if (todoInput?.todos) {
+                          eventBridge.onTodoWrite(todoInput.todos);
+                        }
+                      }
+
+                      if (toolName === "AskUserQuestion") {
+                        const questions = (resolvedInput as { questions?: UserInputEntry["questions"] })
+                          ?.questions;
+                        setUserInputRequest(pipelineId, questions);
+                        appendEvent(pipelineId, "paused", {
+                          reason: "user_input",
+                          questions: questions ?? [],
+                        });
+                        updateStatus(pipelineId, "paused");
+                        pausedForUserInput = true;
+                        void notifyTelegramQuestions(
+                          pipelineId,
+                          questions ?? [],
+                          pipeline.phase.current
+                        );
+                        eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
+                        return {
+                          continue: false,
+                          tool_result:
+                            "Questions have been sent to the user. Please wait for their response before continuing.",
+                        };
+                      }
+
+                      // Handle Playwright tools
+                      if (enablePlaywright && toolName.startsWith("web_")) {
+                        try {
+                          const result = await executePlaywrightTool(
+                            toolName,
+                            resolvedInput as Record<string, unknown>
+                          );
+
+                          if (result.screenshot && Buffer.isBuffer(result.screenshot)) {
+                            await recordScreenshot(
+                              result.screenshot,
+                              toolName,
+                              resolvedInput as Record<string, unknown>
+                            );
+                          }
+
+                          // Emit tool events
+                          eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
+                          eventBridge.onToolComplete(
+                            toolName,
+                            resolvedInput,
+                            input.tool_use_id,
+                            result
+                          );
+
+                          // Serialize result (without screenshot buffer)
+                          const serializedResult = {
+                            ...result,
+                            screenshot: result.screenshot ? "(screenshot captured)" : undefined,
+                          };
+
+                          return {
+                            continue: true,
+                            tool_result: JSON.stringify(serializedResult),
+                          };
+                        } catch (error) {
+                          const errorMsg = error instanceof Error ? error.message : String(error);
+                          eventBridge.onToolError(
+                            toolName,
+                            resolvedInput,
+                            input.tool_use_id,
+                            errorMsg
+                          );
+                          return {
+                            continue: true,
+                            tool_result: JSON.stringify({
+                              success: false,
+                              action: toolName,
+                              error: errorMsg,
+                            }),
+                          };
+                        }
+                      }
+
+                      // Standard tools - emit events
                       eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
-                      eventBridge.onToolComplete(
-                        toolName,
-                        resolvedInput,
-                        input.tool_use_id,
-                        result
-                      );
 
-                      // Serialize result (without screenshot buffer)
-                      const serializedResult = {
-                        ...result,
-                        screenshot: result.screenshot ? "(screenshot captured)" : undefined,
-                      };
+                      if (updatedInput) {
+                        return {
+                          continue: true,
+                          hookSpecificOutput: {
+                            hookEventName: "PreToolUse",
+                            updatedInput,
+                          },
+                        };
+                      }
 
-                      return {
-                        continue: true,
-                        tool_result: JSON.stringify(serializedResult),
-                      };
-                    } catch (error) {
-                      const errorMsg = error instanceof Error ? error.message : String(error);
-                      eventBridge.onToolError(
-                        toolName,
-                        resolvedInput,
-                        input.tool_use_id,
-                        errorMsg
-                      );
-                      return {
-                        continue: true,
-                        tool_result: JSON.stringify({
-                          success: false,
-                          action: toolName,
-                          error: errorMsg,
-                        }),
-                      };
-                    }
-                  }
-
-                  // Standard tools - emit events
-                  eventBridge.onToolStart(toolName, resolvedInput, input.tool_use_id);
-
-                  if (updatedInput) {
-                    return {
-                      continue: true,
-                      hookSpecificOutput: {
-                        hookEventName: "PreToolUse",
-                        updatedInput,
-                      },
-                    };
-                  }
-
-                  return { continue: true };
+                      return { continue: true };
+                    },
+                  ],
+                },
+              ],
+              PostToolUse: [
+                {
+                  hooks: [
+                    async (input) => {
+                      if (input.hook_event_name === "PostToolUse") {
+                        // Don't double-emit for playwright tools (handled above)
+                        if (!input.tool_name.startsWith("web_")) {
+                          eventBridge.onToolComplete(
+                            input.tool_name,
+                            input.tool_input,
+                            input.tool_use_id,
+                            input.tool_response
+                          );
+                        }
+                      }
+                      return { continue: true };
+                    },
+                  ],
+                },
+              ],
+              PostToolUseFailure: [
+                {
+                  hooks: [
+                    async (input) => {
+                      if (input.hook_event_name === "PostToolUseFailure") {
+                        eventBridge.onToolError(
+                          input.tool_name,
+                          input.tool_input,
+                          input.tool_use_id,
+                          input.error
+                        );
+                      }
+                      return { continue: true };
+                    },
+                  ],
                 },
               ],
             },
-          ],
-          PostToolUse: [
-            {
-              hooks: [
-                async (input) => {
-                  if (input.hook_event_name === "PostToolUse") {
-                    // Don't double-emit for workflow or playwright tools
-                    if (!isWorkflowTool(input.tool_name) && !input.tool_name.startsWith("web_")) {
-                      eventBridge.onToolComplete(
-                        input.tool_name,
-                        input.tool_input,
-                        input.tool_use_id,
-                        input.tool_response
-                      );
-                    }
-                  }
-                  return { continue: true };
-                },
-              ],
-            },
-          ],
-          PostToolUseFailure: [
-            {
-              hooks: [
-                async (input) => {
-                  if (input.hook_event_name === "PostToolUseFailure") {
-                    eventBridge.onToolError(
-                      input.tool_name,
-                      input.tool_input,
-                      input.tool_use_id,
-                      input.error
-                    );
-                  }
-                  return { continue: true };
-                },
-              ],
-            },
-          ],
-        },
-      },
-    });
+          }),
+        });
 
     // Process agent messages
     for await (const msg of q) {
@@ -607,6 +593,7 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
       }
 
       if (msg.type === "result") {
+        promptStream.close();
         const result = msg as SDKResultMessage;
         if (result.subtype === "success") {
           console.log(`[Harness] Agent completed successfully`);
@@ -710,6 +697,8 @@ export async function runHarness(config: HarnessConfig): Promise<HarnessResult> 
           totalTurns,
         });
         throw error;
+      } finally {
+        promptStream?.close();
       }
     }
   } finally {

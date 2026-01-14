@@ -10,6 +10,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { type Requirement, type Epic } from "../pipeline";
 import { getClaudeFeaturePath } from "../claude-paths";
+import { ensureProjectClaudeLayout } from "../claude-scaffold";
 
 const execAsync = promisify(exec);
 
@@ -91,7 +92,7 @@ export function getProjectPipelinePath(featurePrefix: string): string {
  * Initialize the target project directory and copy feature spec
  *
  * Creates the .claude directory in backend/.claude/{claudeStorageId}/{featurePrefix}/
- * NOT in the target project - keeping the target project clean.
+ * and seeds .claude settings/skills in the target project.
  */
 export async function initializeTargetProject(
   targetPath: string,
@@ -107,8 +108,9 @@ export async function initializeTargetProject(
   const claudeDir = getClaudeFeaturePath(claudeStorageId, featurePrefix);
   await mkdir(claudeDir, { recursive: true });
 
-  // Create target directory WITHOUT .claude
+  // Create target directory
   await mkdir(targetPath, { recursive: true });
+  await ensureProjectClaudeLayout(targetPath);
 
   // Initialize git repository so agent commits go to the right place
   await execAsync("git init", { cwd: targetPath });
