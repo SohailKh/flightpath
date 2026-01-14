@@ -8,6 +8,7 @@
 import { existsSync, unlinkSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
+  type Pipeline,
   getPipeline,
   updatePhase,
   updateStatus,
@@ -20,12 +21,19 @@ import {
   setIsNewProject,
   setClaudeStorageId,
   setSessionId,
+  clearSessionId,
   getSessionId,
+  updateQAState,
   markRunning,
   markStopped,
 } from "../pipeline";
-import { generateClaudeStorageId } from "../claude-paths";
-import { createV2Session, resumeV2Session, type V2Session, type V2SessionTurnResult } from "../session";
+import { CLAUDE_STORAGE_ROOT, generateClaudeStorageId } from "../claude-paths";
+import {
+  createV2Session,
+  resumeV2Session,
+  type V2Session,
+  type V2SessionTurnResult,
+} from "../session";
 import { createToolCallbacks, emitTodoEvents } from "./callbacks";
 import { LOG, logPhase } from "./utils";
 import {
@@ -36,10 +44,22 @@ import {
   initializeTargetProject,
   sanitizeProjectName,
 } from "./project-init";
+import {
+  type FeatureMap,
+  type FeatureMapFeature,
+  getFeatureMapPath,
+  getFeatureSpecPath,
+  getPendingFeatures,
+  loadFeatureMap,
+  selectPrimaryFeature,
+} from "./feature-map";
 import { runHarness } from "../harness";
 
 // Store active sessions in memory (keyed by pipelineId)
 const activeSessions = new Map<string, V2Session>();
+const QA_STORAGE_ROOT = CLAUDE_STORAGE_ROOT;
+const QA_OUTPUT_ROOT = FLIGHTPATH_ROOT;
+const MAX_AUTO_FEATURES = 5;
 
 /**
  * Clear any existing feature spec files to prevent contamination
@@ -57,9 +77,21 @@ async function clearFeatureSpecs(rootPath?: string): Promise<void> {
     for (const entry of entries) {
       if (entry.isDirectory() && entry.name !== "skills") {
         const specPath = join(claudeDir, entry.name, "feature-spec.v3.json");
+        const smokePath = join(claudeDir, entry.name, "smoke-tests.json");
+        const featureMapPath =
+          entry.name === "feature-map"
+            ? join(claudeDir, entry.name, "feature-map.json")
+            : null;
         if (existsSync(specPath)) {
           unlinkSync(specPath);
           console.log(`[QA] Cleared stale feature-spec.v3.json from .claude/${entry.name}/`);
+        }
+        if (existsSync(smokePath)) {
+          unlinkSync(smokePath);
+        }
+        if (featureMapPath && existsSync(featureMapPath)) {
+          unlinkSync(featureMapPath);
+          console.log("[QA] Cleared stale feature-map.json from .claude/feature-map/");
         }
       }
     }
@@ -75,7 +107,8 @@ async function getOrCreateSession(
   pipelineId: string,
   targetProjectPath?: string,
   isNewProject?: boolean,
-  claudeStorageId?: string
+  claudeStorageId?: string,
+  claudeStorageRootOverride?: string
 ): Promise<V2Session> {
   // Check if we have an active session in memory
   let session = activeSessions.get(pipelineId);
@@ -96,6 +129,7 @@ async function getOrCreateSession(
       pipelineId,
       targetProjectPath,
       claudeStorageId,
+      claudeStorageRootOverride,
       isNewProject,
       toolCallbacks,
       modelOverride: "opus",
@@ -115,6 +149,7 @@ async function getOrCreateSession(
       pipelineId,
       targetProjectPath,
       claudeStorageId,
+      claudeStorageRootOverride,
       isNewProject,
       toolCallbacks,
       modelOverride: "opus",
@@ -164,6 +199,214 @@ function processSessionResult(
   emitTodoEvents(pipelineId, "qa", result.structuredOutput);
 }
 
+async function resetQASession(pipelineId: string): Promise<void> {
+  await cleanupSession(pipelineId);
+  clearSessionId(pipelineId);
+}
+
+function shouldAutoDecompose(featureMap: FeatureMap | null): boolean {
+  if (!featureMap) return false;
+  if (featureMap.decompositionMode === "selected") {
+    return featureMap.selectedFeatureIds.length > 0;
+  }
+  return featureMap.features.length > 0;
+}
+
+function selectCurrentFeature(
+  pipeline: Pipeline,
+  pendingFeatures: FeatureMapFeature[]
+): FeatureMapFeature | null {
+  if (pendingFeatures.length === 0) return null;
+  const preferredId = pipeline.qa?.featureId;
+  const preferredPrefix = pipeline.qa?.featurePrefix;
+  const match =
+    pendingFeatures.find((feature) => feature.id === preferredId) ||
+    pendingFeatures.find((feature) => feature.prefix === preferredPrefix);
+  return match ?? pendingFeatures[0];
+}
+
+function buildFeatureKickoffPrompt(
+  featureMap: FeatureMap,
+  feature: FeatureMapFeature,
+  userMessage?: string
+): string {
+  const featureMapPath = getFeatureMapPath(QA_OUTPUT_ROOT);
+  const lines = [
+    "You are continuing a multi-feature decomposition using the feature map below.",
+    `Feature map: \`${featureMapPath}\``,
+    "",
+    `Project: ${featureMap.projectName}`,
+    `Project summary: ${featureMap.projectSummary || "n/a"}`,
+    `Target platforms: ${
+      featureMap.targetPlatforms.length > 0
+        ? featureMap.targetPlatforms.join(", ")
+        : "unspecified"
+    }`,
+    "",
+    `Focus ONLY on this feature: ${feature.name} (${feature.id})`,
+    `Feature prefix: ${feature.prefix}`,
+    `Feature summary: ${feature.summary || "n/a"}`,
+    `Dependencies: ${
+      feature.dependencies.length > 0 ? feature.dependencies.join(", ") : "none"
+    }`,
+    "",
+    "Output requirements ONLY for this feature.",
+    `Write outputs to \`.claude/${feature.prefix}/feature-spec.v3.json\` and \`.claude/${feature.prefix}/smoke-tests.json\`.`,
+  ];
+
+  if (userMessage && userMessage.trim().length > 0) {
+    lines.push("", `User note: ${userMessage.trim()}`);
+  }
+
+  return lines.join("\n");
+}
+
+async function runQALoop(
+  pipelineId: string,
+  message: string,
+  targetProjectPath: string | undefined,
+  isNewProject: boolean
+): Promise<void> {
+  const pipeline = getPipeline(pipelineId);
+  if (!pipeline) return;
+
+  let nextMessage = message;
+  let remainingAuto = MAX_AUTO_FEATURES;
+
+  while (true) {
+    const featureMap = await loadFeatureMap(QA_OUTPUT_ROOT);
+    const pendingFeatures = featureMap
+      ? getPendingFeatures(featureMap, QA_OUTPUT_ROOT)
+      : [];
+
+    const stage = !featureMap
+      ? "map"
+      : pendingFeatures.length === 0
+        ? "complete"
+        : "feature";
+
+    if (stage === "complete") {
+      updateQAState(pipelineId, { stage: undefined, featureId: undefined, featurePrefix: undefined });
+      await resetQASession(pipelineId);
+      await onQAComplete(pipelineId, featureMap ?? undefined);
+      return;
+    }
+
+    let currentFeature: FeatureMapFeature | null = null;
+    if (stage === "feature") {
+      currentFeature = selectCurrentFeature(pipeline, pendingFeatures);
+      if (!currentFeature) {
+        appendEvent(pipelineId, "pipeline_failed", {
+          phase: "qa",
+          error: "No pending features available for decomposition",
+        });
+        updateStatus(pipelineId, "failed");
+        return;
+      }
+    }
+
+    const hasSession = activeSessions.has(pipelineId);
+    const needsNewSession =
+      !hasSession ||
+      pipeline.qa?.stage !== stage ||
+      (stage === "feature" && pipeline.qa?.featurePrefix !== currentFeature?.prefix);
+
+    if (needsNewSession) {
+      await resetQASession(pipelineId);
+      updateQAState(pipelineId, {
+        stage,
+        featureId: currentFeature?.id,
+        featurePrefix: currentFeature?.prefix,
+      });
+    }
+
+    const session = await getOrCreateSession(
+      pipelineId,
+      targetProjectPath,
+      isNewProject,
+      pipeline.claudeStorageId,
+      QA_STORAGE_ROOT
+    );
+
+    if (needsNewSession) {
+      appendEvent(pipelineId, "agent_prompt", {
+        prompt: session.systemPrompt,
+        agentName: "feature-qa",
+        phase: "qa",
+      });
+    }
+
+    const outgoingMessage =
+      stage === "feature" && needsNewSession && featureMap && currentFeature
+        ? buildFeatureKickoffPrompt(featureMap, currentFeature, nextMessage)
+        : nextMessage;
+
+    logPhase("qa", "Sending QA message", outgoingMessage.slice(0, 120));
+    const result = await session.send(outgoingMessage);
+
+    processSessionResult(pipelineId, result);
+    addToConversation(pipelineId, "assistant", result.reply);
+
+    appendEvent(pipelineId, "agent_message", {
+      content: result.reply,
+      streaming: false,
+      requiresUserInput: result.requiresUserInput,
+      userQuestions: result.userQuestions,
+    });
+
+    if (result.requiresUserInput) {
+      return;
+    }
+
+    const updatedFeatureMap = await loadFeatureMap(QA_OUTPUT_ROOT);
+    if (!updatedFeatureMap) {
+      if (isQAComplete(result, QA_OUTPUT_ROOT)) {
+        await resetQASession(pipelineId);
+        await onQAComplete(pipelineId, undefined);
+      }
+      return;
+    }
+
+    const pendingAfter = getPendingFeatures(updatedFeatureMap, QA_OUTPUT_ROOT);
+    if (pendingAfter.length === 0) {
+      updateQAState(pipelineId, { stage: undefined, featureId: undefined, featurePrefix: undefined });
+      await resetQASession(pipelineId);
+      await onQAComplete(pipelineId, updatedFeatureMap);
+      return;
+    }
+
+    const featureCompleted =
+      stage === "feature" &&
+      currentFeature &&
+      existsSync(getFeatureSpecPath(currentFeature.prefix, QA_OUTPUT_ROOT));
+    const mapCompleted = stage === "map" && updatedFeatureMap;
+    if (featureCompleted || mapCompleted) {
+      await resetQASession(pipelineId);
+    }
+
+    if (!shouldAutoDecompose(updatedFeatureMap)) {
+      appendEvent(pipelineId, "status_update", {
+        action: "Feature map ready. Send a message to select features for decomposition.",
+        phase: "qa",
+        statusSource: "orchestrator",
+      });
+      return;
+    }
+
+    if (remainingAuto <= 0) {
+      appendEvent(pipelineId, "status_update", {
+        action: "Feature decomposition paused; send a message to continue.",
+        phase: "qa",
+        statusSource: "orchestrator",
+      });
+      return;
+    }
+
+    remainingAuto -= 1;
+    nextMessage = "";
+  }
+}
+
 /**
  * Run the QA phase - interview user about the feature
  * This phase is interactive and requires user input
@@ -192,7 +435,7 @@ export async function runQAPhase(
 
   console.log(`${LOG.qa} Starting QA phase for pipeline ${pipelineId.slice(0, 8)}`);
   if (isNewProject) {
-    await clearFeatureSpecs(resolvedTargetPath);
+    await clearFeatureSpecs(QA_OUTPUT_ROOT);
   }
   appendEvent(pipelineId, "qa_started", { initialPrompt });
   updatePhase(pipelineId, { current: "qa" });
@@ -205,57 +448,11 @@ export async function runQAPhase(
       statusSource: "orchestrator",
     });
 
-    // Get or create V2 session
-    const session = await getOrCreateSession(
-      pipelineId,
-      resolvedTargetPath,
-      isNewProject,
-      pipeline.claudeStorageId
-    );
-
-    // Emit system prompt for debugging
-    appendEvent(pipelineId, "agent_prompt", {
-      prompt: session.systemPrompt,
-      agentName: "feature-qa",
-      phase: "qa",
-    });
-
-    // Send initial prompt
-    const result = await session.send(initialPrompt);
-
-    // Process result
-    processSessionResult(pipelineId, result);
-    logPhase("qa", "Agent responded", result.reply.slice(0, 100));
-
     // Store conversation history (for backwards compatibility with existing code)
     addToConversation(pipelineId, "user", initialPrompt);
-    addToConversation(pipelineId, "assistant", result.reply);
 
-    // Emit the full response
-    appendEvent(pipelineId, "agent_message", {
-      content: result.reply,
-      streaming: false,
-      requiresUserInput: result.requiresUserInput,
-      userQuestions: result.userQuestions,
-    });
-
-    // If agent needs user input, pause and wait for message
-    if (result.requiresUserInput) {
-      markStopped(pipelineId);
-      return;
-    }
-
-    // Check if QA is complete (agent should have written feature-spec.v3.json)
-    const completionRoot = session.cwd || resolvedTargetPath;
-    if (isQAComplete(result, completionRoot)) {
-      markStopped(pipelineId);
-      await cleanupSession(pipelineId);
-      await onQAComplete(pipelineId, result);
-    } else {
-      markStopped(pipelineId);
-    }
+    await runQALoop(pipelineId, initialPrompt, resolvedTargetPath, isNewProject);
   } catch (error) {
-    markStopped(pipelineId);
     await cleanupSession(pipelineId);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`[Pipeline ${pipelineId}] QA phase failed:`, errorMessage);
@@ -267,6 +464,8 @@ export async function runQAPhase(
       error: errorMessage,
     });
     updateStatus(pipelineId, "failed");
+  } finally {
+    markStopped(pipelineId);
   }
 }
 
@@ -305,49 +504,21 @@ export async function handleUserMessage(
       statusSource: "orchestrator",
     });
 
-    // Get existing session (should exist from runQAPhase or previous message)
-    const session = await getOrCreateSession(
+    await runQALoop(
       pipelineId,
+      message,
       pipeline.targetProjectPath,
-      pipeline.isNewProject ?? false,
-      pipeline.claudeStorageId
+      pipeline.isNewProject ?? false
     );
-
-    // Send message - V2 session automatically maintains conversation history
-    console.log(`[QA Debug] Sending message via V2 session...`);
-    const result = await session.send(message);
-    console.log(`[QA Debug] V2 session.send() returned, requiresUserInput=${result.requiresUserInput}`);
-
-    // Process result
-    processSessionResult(pipelineId, result);
-
-    addToConversation(pipelineId, "assistant", result.reply);
-
-    appendEvent(pipelineId, "agent_message", {
-      content: result.reply,
-      streaming: false,
-      requiresUserInput: result.requiresUserInput,
-      userQuestions: result.userQuestions,
-    });
-
-    // Check if QA is complete
-    const completionRoot = session.cwd || pipeline.targetProjectPath;
-    if (isQAComplete(result, completionRoot)) {
-      markStopped(pipelineId);
-      await cleanupSession(pipelineId);
-      await onQAComplete(pipelineId, result);
-    } else {
-      // Waiting for more user input
-      markStopped(pipelineId);
-    }
   } catch (error) {
-    markStopped(pipelineId);
     await cleanupSession(pipelineId);
     appendEvent(pipelineId, "pipeline_failed", {
       phase: "qa",
       error: error instanceof Error ? error.message : "Unknown error",
     });
     updateStatus(pipelineId, "failed");
+  } finally {
+    markStopped(pipelineId);
   }
 }
 
@@ -427,7 +598,7 @@ function isQAComplete(result: V2SessionTurnResult, rootPath?: string): boolean {
  */
 async function onQAComplete(
   pipelineId: string,
-  _result: V2SessionTurnResult
+  featureMap?: FeatureMap
 ): Promise<void> {
   const pipeline = getPipeline(pipelineId);
 
@@ -436,11 +607,25 @@ async function onQAComplete(
     message: "Requirements have been generated",
   });
 
+  const primaryFeature = featureMap ? selectPrimaryFeature(featureMap) : null;
+  if (primaryFeature) {
+    appendEvent(pipelineId, "status_update", {
+      action: `Selected feature "${primaryFeature.name}" (${primaryFeature.prefix}) for implementation`,
+      phase: "qa",
+      statusSource: "orchestrator",
+    });
+  }
+
   // Parse requirements, epics, project name, and feature prefix from the feature spec
-  const specRoot = pipeline?.targetProjectPath;
-  const { requirements, epics, projectName, featurePrefix } = await parseRequirementsFromSpec(
-    specRoot
-  );
+  let specRoot = QA_OUTPUT_ROOT;
+  let parsed = await parseRequirementsFromSpec(specRoot, primaryFeature?.prefix);
+
+  if (parsed.requirements.length === 0 && pipeline?.targetProjectPath) {
+    specRoot = pipeline.targetProjectPath;
+    parsed = await parseRequirementsFromSpec(specRoot, primaryFeature?.prefix);
+  }
+
+  const { requirements, epics, projectName, featurePrefix } = parsed;
 
   console.log(`${LOG.qa} Complete. Found ${requirements.length} requirements, ${epics.length} epics, project: ${projectName}, prefix: ${featurePrefix}`);
 
@@ -461,31 +646,34 @@ async function onQAComplete(
     setFeaturePrefix(pipelineId, featurePrefix);
   }
 
-  let targetPath = specRoot || generateTargetProjectPath(projectName);
+  let targetPath = pipeline?.targetProjectPath || generateTargetProjectPath(projectName);
   const desiredPath = generateTargetProjectPath(projectName);
 
-  if (pipeline?.isNewProject && specRoot && specRoot !== desiredPath) {
+  if (pipeline?.isNewProject && pipeline.targetProjectPath && pipeline.targetProjectPath !== desiredPath) {
     try {
       const { rename, mkdir } = await import("node:fs/promises");
       if (!existsSync(desiredPath)) {
         await mkdir(dirname(desiredPath), { recursive: true });
-        await rename(specRoot, desiredPath);
+        await rename(pipeline.targetProjectPath, desiredPath);
         targetPath = desiredPath;
-        console.log(`[QA] Moved project directory: ${specRoot} -> ${desiredPath}`);
+        console.log(`[QA] Moved project directory: ${pipeline.targetProjectPath} -> ${desiredPath}`);
       } else {
-        console.warn(`[QA] Target project path already exists: ${desiredPath}. Keeping ${specRoot}.`);
+        console.warn(`[QA] Target project path already exists: ${desiredPath}. Keeping ${pipeline.targetProjectPath}.`);
       }
     } catch (error) {
       console.warn(
-        `[QA] Failed to move project directory from ${specRoot} to ${desiredPath}:`,
+        `[QA] Failed to move project directory from ${pipeline.targetProjectPath} to ${desiredPath}:`,
         error instanceof Error ? error.message : String(error)
       );
     }
-  } else if (!specRoot) {
+  } else if (!pipeline?.targetProjectPath) {
     targetPath = desiredPath;
   }
 
   setTargetProjectPath(pipelineId, targetPath);
+
+  const cleanupSource = pipeline?.isNewProject ?? false;
+  const shouldCleanupSource = cleanupSource && specRoot !== QA_OUTPUT_ROOT;
 
   // Create target directory and copy feature spec to backend/.claude storage
   await initializeTargetProject(
@@ -493,7 +681,7 @@ async function onQAComplete(
     claudeStorageId,
     featurePrefix,
     specRoot,
-    pipeline?.isNewProject ?? false
+    shouldCleanupSource
   );
 
   appendEvent(pipelineId, "target_project_set", {

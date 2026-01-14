@@ -56,6 +56,8 @@ export interface V2SessionOptions {
   targetProjectPath?: string;
   /** Storage ID for centralized .claude paths */
   claudeStorageId?: string;
+  /** Override for .claude storage root */
+  claudeStorageRootOverride?: string;
   /** Treat target as a new project (skip file ops) */
   isNewProject?: boolean;
   /** Callbacks for tool activity events */
@@ -284,7 +286,8 @@ function resolveToolInput(
   toolName: string,
   toolInput: unknown,
   cwd?: string,
-  claudeStorageId?: string
+  claudeStorageId?: string,
+  claudeStorageRootOverride?: string
 ): { resolvedInput: unknown; updatedInput?: Record<string, unknown> } {
   if (!toolInput || typeof toolInput !== "object") {
     return { resolvedInput: toolInput };
@@ -297,7 +300,11 @@ function resolveToolInput(
   const updatePathKey = (key: string) => {
     const raw = input[key];
     if (typeof raw !== "string" || !shouldRewritePath(raw)) return;
-    const claudeRewritten = rewriteClaudeFilePath(raw, claudeStorageId);
+    const claudeRewritten = rewriteClaudeFilePath(
+      raw,
+      claudeStorageId,
+      claudeStorageRootOverride
+    );
     const resolved = cwd ? resolveUserPath(claudeRewritten, cwd) : claudeRewritten;
     if (resolved !== raw) {
       next[key] = resolved;
@@ -325,7 +332,11 @@ function resolveToolInput(
     case "Bash": {
       const rawCommand = input.command;
       if (typeof rawCommand === "string") {
-        const claudeRewritten = rewriteClaudeCommand(rawCommand, claudeStorageId);
+        const claudeRewritten = rewriteClaudeCommand(
+          rawCommand,
+          claudeStorageId,
+          claudeStorageRootOverride
+        );
         const wrapped = rewriteBashCommand(claudeRewritten, cwd);
         if (wrapped !== rawCommand) {
           next.command = wrapped;
@@ -359,7 +370,8 @@ function buildHooks(
   setRequiresUserInput: (value: boolean) => void,
   pipelineId?: string,
   sessionCwd?: string,
-  claudeStorageId?: string
+  claudeStorageId?: string,
+  claudeStorageRootOverride?: string
 ): Partial<Record<HookEvent, HookCallbackMatcher[]>> | undefined {
   const preToolUseHook = async (
     input: HookInput,
@@ -375,7 +387,8 @@ function buildHooks(
       preInput.tool_name,
       preInput.tool_input,
       sessionCwd,
-      claudeStorageId
+      claudeStorageId,
+      claudeStorageRootOverride
     );
 
     await ensureLocalClaudeForToolInput(
@@ -528,6 +541,7 @@ export async function createV2Session(
     pipelineId,
     targetProjectPath,
     claudeStorageId,
+    claudeStorageRootOverride,
     isNewProject,
     toolCallbacks,
     modelOverride,
@@ -607,7 +621,8 @@ When writing files (like feature-spec.v3.json), use this as the base path.
       setRequiresUserInput,
       pipelineId,
       sessionCwd,
-      claudeStorageId
+      claudeStorageId,
+      claudeStorageRootOverride
     ),
   });
 
@@ -706,6 +721,7 @@ export async function resumeV2Session(
     ? resolveUserPath(targetProjectPath, process.cwd())
     : undefined;
   const claudeStorageId = options.claudeStorageId;
+  const claudeStorageRootOverride = options.claudeStorageRootOverride;
 
   // Determine effective model
   const frontmatter = await parseAgentFrontmatter(agentName);
@@ -753,7 +769,8 @@ export async function resumeV2Session(
       setRequiresUserInput,
       pipelineId,
       sessionCwd,
-      claudeStorageId
+      claudeStorageId,
+      claudeStorageRootOverride
     ),
   });
 

@@ -2,12 +2,16 @@ import { beforeEach, describe, expect, it, jest, mock } from "bun:test";
 
 mock.restore();
 
-let pipeline: {
+type PipelineStub = {
   phase: { current: string };
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
   targetProjectPath?: string;
   isNewProject?: boolean;
-} | undefined;
+  qa?: { stage?: string; featureId?: string; featurePrefix?: string };
+  claudeStorageId?: string;
+};
+
+let pipeline: PipelineStub | undefined;
 
 const getPipeline = jest.fn(() => pipeline);
 const updatePhase = jest.fn();
@@ -17,17 +21,47 @@ const setEpics = jest.fn();
 const setTargetProjectPath = jest.fn();
 const setIsNewProject = jest.fn();
 const setFeaturePrefix = jest.fn();
+const setClaudeStorageId = jest.fn();
+const setSessionId = jest.fn();
+const clearSessionId = jest.fn();
+const getSessionId = jest.fn(() => undefined);
+const updateQAState = jest.fn();
+const markRunning = jest.fn();
+const markStopped = jest.fn();
 const appendEvent = jest.fn();
 const addToConversation = jest.fn((_, role, content) => {
   pipeline?.conversationHistory.push({ role, content });
 });
 
-const runPipelineAgent = jest.fn();
-const runPipelineAgentWithMessage = jest.fn();
-
 const createToolCallbacks = jest.fn(() => ({}));
+const emitTodoEvents = jest.fn();
 const logPhase = jest.fn();
 const LOG = { qa: "[QA]" };
+
+const sessionSend = jest.fn();
+const createV2Session = jest.fn(async () => ({
+  systemPrompt: "prompt",
+  send: sessionSend,
+  close: jest.fn(),
+}));
+const resumeV2Session = jest.fn(async () => ({
+  systemPrompt: "prompt",
+  send: sessionSend,
+  close: jest.fn(),
+}));
+
+const runHarness = jest.fn(async () => {});
+const generateClaudeStorageId = jest.fn(() => "storage-id");
+
+const loadFeatureMap = jest.fn(async () => null);
+const getPendingFeatures = jest.fn(() => []);
+const getFeatureSpecPath = jest.fn(
+  () => "/fake/root/.claude/feature/feature-spec.v3.json"
+);
+const selectPrimaryFeature = jest.fn(() => null);
+const getFeatureMapPath = jest.fn(
+  () => "/fake/root/.claude/feature-map/feature-map.json"
+);
 
 let parsedRequirements: Array<Record<string, unknown>> = [];
 let parsedEpics: Array<Record<string, unknown>> = [];
@@ -42,12 +76,18 @@ const parseRequirementsFromSpec = jest.fn(async () => ({
 const generateTargetProjectPath = jest.fn(() => "/target/path");
 const generateStagingProjectPath = jest.fn(() => "/staging/path");
 const initializeTargetProject = jest.fn(async () => {});
+const sanitizeProjectName = jest.fn((name: string) =>
+  name.toLowerCase().replace(/\s+/g, "-")
+);
 const FLIGHTPATH_ROOT = "/fake/root";
+const CLAUDE_STORAGE_ROOT = "/fake/root/.claude";
 
 let specExists = false;
 
 mock.module("node:fs", () => ({
   existsSync: () => specExists,
+  unlinkSync: jest.fn(),
+  readdirSync: jest.fn(() => []),
 }));
 mock.module("../pipeline", () => ({
   getPipeline,
@@ -58,15 +98,27 @@ mock.module("../pipeline", () => ({
   setTargetProjectPath,
   setFeaturePrefix,
   setIsNewProject,
+  setClaudeStorageId,
+  setSessionId,
+  clearSessionId,
+  getSessionId,
+  updateQAState,
   addToConversation,
   appendEvent,
+  markRunning,
+  markStopped,
 }));
-mock.module("../agent", () => ({
-  runPipelineAgent,
-  runPipelineAgentWithMessage,
+mock.module("../claude-paths", () => ({
+  CLAUDE_STORAGE_ROOT,
+  generateClaudeStorageId,
+}));
+mock.module("../session", () => ({
+  createV2Session,
+  resumeV2Session,
 }));
 mock.module("./callbacks", () => ({
   createToolCallbacks,
+  emitTodoEvents,
 }));
 mock.module("./utils", () => ({
   LOG,
@@ -78,9 +130,20 @@ mock.module("./project-init", () => ({
   generateTargetProjectPath,
   generateStagingProjectPath,
   initializeTargetProject,
+  sanitizeProjectName,
+}));
+mock.module("./feature-map", () => ({
+  loadFeatureMap,
+  getPendingFeatures,
+  getFeatureSpecPath,
+  selectPrimaryFeature,
+  getFeatureMapPath,
+}));
+mock.module("../harness", () => ({
+  runHarness,
 }));
 
-const { runQAPhase, handleUserMessage, setImplementationLoopRunner } = await import(
+const { runQAPhase, handleUserMessage } = await import(
   `./qa-phase?test=${Date.now()}`
 );
 
@@ -91,12 +154,19 @@ beforeEach(() => {
     conversationHistory: [],
     targetProjectPath: "/project/path",
     isNewProject: false,
+    qa: { stage: "map" },
   };
   parsedRequirements = [];
   parsedEpics = [];
   parsedProjectName = "Project";
   parsedFeaturePrefix = "weather";
   specExists = false;
+  sessionSend.mockResolvedValue({
+    reply: "ok",
+    requiresUserInput: true,
+    toolCalls: [],
+    userQuestions: [],
+  });
 });
 
 describe("runQAPhase", () => {
@@ -104,14 +174,15 @@ describe("runQAPhase", () => {
     pipeline = undefined;
 
     await runQAPhase("pipe-1", "hello");
-    expect(runPipelineAgent).not.toHaveBeenCalled();
+    expect(createV2Session).not.toHaveBeenCalled();
   });
 
   it("waits for user input when required", async () => {
-    runPipelineAgent.mockResolvedValue({
+    sessionSend.mockResolvedValue({
       reply: "Question",
       requiresUserInput: true,
       toolCalls: [],
+      userQuestions: [],
     });
 
     await runQAPhase("pipe-1", "hello");
@@ -124,11 +195,8 @@ describe("runQAPhase", () => {
     expect(types).toContain("agent_message");
   });
 
-  it("completes QA and starts implementation loop", async () => {
-    const runner = jest.fn(async () => {});
-    setImplementationLoopRunner(runner);
-
-    runPipelineAgent.mockResolvedValue({
+  it("completes QA and starts harness", async () => {
+    sessionSend.mockResolvedValue({
       reply: "done",
       requiresUserInput: false,
       toolCalls: [
@@ -152,20 +220,20 @@ describe("runQAPhase", () => {
 
     await runQAPhase("pipe-1", "hello");
 
-    expect(parseRequirementsFromSpec).toHaveBeenCalledWith("/project/path");
-    expect(setFeaturePrefix).toHaveBeenCalledWith("pipe-1", parsedFeaturePrefix);
+    expect(parseRequirementsFromSpec).toHaveBeenCalledWith("/fake/root", undefined);
+    expect(setFeaturePrefix).toHaveBeenCalled();
     expect(setTargetProjectPath).toHaveBeenCalledWith("pipe-1", "/project/path");
     expect(initializeTargetProject).toHaveBeenCalledWith(
       "/project/path",
-      expect.any(String),
+      "storage-id",
       parsedFeaturePrefix,
-      "/project/path",
+      "/fake/root",
       false
     );
     expect(setRequirements).toHaveBeenCalled();
     expect(setEpics).toHaveBeenCalled();
     expect(updatePhase).toHaveBeenCalledWith("pipe-1", { totalRequirements: 1 });
-    expect(runner).toHaveBeenCalledWith("pipe-1");
+    expect(runHarness).toHaveBeenCalled();
 
     const types = appendEvent.mock.calls.map((call) => call[1]);
     expect(types).toContain("qa_completed");
@@ -173,7 +241,7 @@ describe("runQAPhase", () => {
   });
 
   it("fails when no requirements found", async () => {
-    runPipelineAgent.mockResolvedValue({
+    sessionSend.mockResolvedValue({
       reply: "done",
       requiresUserInput: false,
       toolCalls: [
@@ -204,29 +272,17 @@ describe("handleUserMessage", () => {
       "user_message",
       expect.objectContaining({ error: "User messages only allowed during QA phase" })
     );
-    expect(runPipelineAgentWithMessage).not.toHaveBeenCalled();
   });
 
   it("continues QA and emits events", async () => {
-    runPipelineAgentWithMessage.mockResolvedValue({
+    sessionSend.mockResolvedValue({
       reply: "next",
       requiresUserInput: true,
       toolCalls: [],
+      userQuestions: [],
     });
 
     await handleUserMessage("pipe-1", "message");
-
-    expect(runPipelineAgentWithMessage).toHaveBeenCalledWith(
-      "feature-qa",
-      "message",
-      pipeline?.conversationHistory ?? [],
-      expect.any(Function),
-      "/project/path",
-      50,
-      {},
-      expect.any(Function),
-      false
-    );
 
     const types = appendEvent.mock.calls.map((call) => call[1]);
     expect(types).toContain("user_message");

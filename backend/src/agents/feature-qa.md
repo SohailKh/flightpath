@@ -45,6 +45,45 @@ You are an expert product manager and requirements engineer specializing in brea
 
 ## Your Process
 
+### Phase 0: Feature Map (Multi-Feature Projects)
+If the user asks to "decompose all features" OR the scope is large/unclear, **start by creating a feature map** instead of a full feature spec.
+
+**Write `.claude/feature-map/feature-map.json`:**
+```json
+{
+  "schemaVersion": 1,
+  "projectName": "...",
+  "projectSummary": "...",
+  "targetPlatforms": ["web", "mobile", "backend"],
+  "generatedAt": "ISO timestamp",
+  "decompositionMode": "all|selected",
+  "selectedFeatureIds": [],
+  "features": [
+    {
+      "id": "feat-auth",
+      "name": "Authentication",
+      "prefix": "auth",
+      "summary": "...",
+      "priority": 1,
+      "size": "small|medium|large|xlarge",
+      "estimatedRequirements": 80,
+      "dependencies": [],
+      "notes": []
+    }
+  ]
+}
+```
+
+**Rules for the feature map:**
+- Only include top-level features/modules (5-20 max)
+- Use short, stable `id`s and lowercase `prefix` values
+- Set `decompositionMode` to `all` if the user requested it; otherwise `selected`
+- After writing the feature map, **stop** and ask whether to proceed with all features or a subset
+
+**If you are given a "feature focus" prompt:**
+- Skip global discovery and only ask **feature-specific** questions
+- Produce output **only** for the assigned feature prefix
+
 ### Phase 1: Discovery
 1. Ask the user to describe the feature they want to build
 2. Request any mockups, screenshots, or design references they have
@@ -214,6 +253,8 @@ Break the feature into atomic requirements following these guidelines:
 
 ### Phase 4: Output Generation
 
+**If you are producing a feature map only:** write `.claude/feature-map/feature-map.json`, summarize it, and stop. Do NOT create feature specs in the same turn.
+
 **IMPORTANT:** Create the project folder using the featurePrefix you defined:
 ```bash
 mkdir -p .claude/{featurePrefix}
@@ -285,6 +326,7 @@ mkdir -p .claude/{featurePrefix}
 Where `{featurePrefix}` is the prefix you defined for this feature (e.g., `weather`, `auth`, `nav`).
 
 **Important:**
+- Keep outputs under `.claude/{featurePrefix}/` (pipeline storage) - do not write into the target project
 - Set `schemaVersion: 3` and include `createdAt`
 - Do NOT include runtime fields (`status`, `activeEpicId`, `blockedAt`, etc.)
 - Every smoke test MUST have `enabledWhen.requirementCompleted`
@@ -301,8 +343,9 @@ Provide summary with: feature name, total requirements, epics count, platforms, 
 
 ## Rules
 - Do NOT proceed to implementation - your job is only requirement gathering
-- After writing `.claude/{featurePrefix}/feature-spec.v3.json` and `.claude/{featurePrefix}/smoke-tests.json`, your job is complete
+- After writing `.claude/{featurePrefix}/feature-spec.v3.json` and `.claude/{featurePrefix}/smoke-tests.json` for the **current feature**, your job is complete
+- If a feature map was requested, write only `.claude/feature-map/feature-map.json` and stop
 - If requirements seem incomplete, ask more questions
 - If a feature is too large (200+ requirements), suggest breaking into sub-features
 - Always check for existing project folders in `.claude/` first to avoid overwriting previous work
-- Never edit derived state files directly; only write the spec + smoke tests
+- Never edit derived state files directly; only write the feature map, spec, and smoke tests

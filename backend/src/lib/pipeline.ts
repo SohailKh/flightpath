@@ -146,6 +146,14 @@ export interface PhaseState {
   retryCount: number;
 }
 
+export type QAStage = "map" | "feature";
+
+export interface QAState {
+  stage?: QAStage;
+  featureId?: string;
+  featurePrefix?: string;
+}
+
 export interface UserInputEntry {
   ts: string;
   message: string;
@@ -168,6 +176,8 @@ export interface Pipeline {
   abortRequested: boolean;
   // Conversation history for QA phase
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  // QA decomposition state (feature map + current feature focus)
+  qa?: QAState;
   // User input for non-QA interruptions (AskUserQuestion)
   awaitingUserInput: boolean;
   pendingUserQuestions?: AskUserQuestion[];
@@ -255,6 +265,7 @@ function loadPersistedState(): void {
       pipeline.awaitingUserInput = pipeline.awaitingUserInput ?? false;
       pipeline.userInputLog = pipeline.userInputLog ?? [];
       pipeline.pendingUserQuestions = pipeline.pendingUserQuestions ?? undefined;
+      pipeline.qa = pipeline.qa ?? { stage: "map" };
       pipelines.set(id, pipeline);
       subscribers.set(id, new Set());
     }
@@ -312,6 +323,7 @@ export function createPipeline(
     pauseRequested: false,
     abortRequested: false,
     conversationHistory: [],
+    qa: { stage: "map" },
     awaitingUserInput: false,
     pendingUserQuestions: undefined,
     userInputLog: [],
@@ -575,6 +587,16 @@ export function setClaudeStorageId(
   persistState();
 }
 
+export function updateQAState(
+  pipelineId: string,
+  updates: Partial<QAState>
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+  pipeline.qa = { ...pipeline.qa, ...updates };
+  persistState();
+}
+
 /**
  * Set the V2 session ID for this pipeline (enables conversation resumption)
  */
@@ -584,6 +606,14 @@ export function setSessionId(pipelineId: string, sessionId: string): void {
 
   pipeline.sessionId = sessionId;
   console.log(`[Pipeline] ${pipelineId.slice(0, 8)} session ID set: ${sessionId.slice(0, 8)}...`);
+  persistState();
+}
+
+export function clearSessionId(pipelineId: string): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+  if (!pipeline.sessionId) return;
+  pipeline.sessionId = undefined;
   persistState();
 }
 

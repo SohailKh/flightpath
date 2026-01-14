@@ -189,13 +189,21 @@ export interface ParsedFeatureSpec {
 /**
  * Find the feature spec file in any .claude/{prefix}/ folder
  */
-async function findFeatureSpecPath(rootPath?: string): Promise<string | null> {
+async function findFeatureSpecPath(
+  rootPath?: string,
+  featurePrefix?: string
+): Promise<string | null> {
   const { readdir } = await import("node:fs/promises");
   const { existsSync } = await import("node:fs");
 
   const baseRoot = rootPath ? resolve(rootPath) : FLIGHTPATH_ROOT;
   const claudeDir = join(baseRoot, ".claude");
   if (!existsSync(claudeDir)) return null;
+
+  if (featurePrefix) {
+    const specPath = join(claudeDir, featurePrefix, "feature-spec.v3.json");
+    return existsSync(specPath) ? specPath : null;
+  }
 
   try {
     const entries = await readdir(claudeDir, { withFileTypes: true });
@@ -217,12 +225,13 @@ async function findFeatureSpecPath(rootPath?: string): Promise<string | null> {
  * Parse requirements, epics, and project name from the feature spec file
  */
 export async function parseRequirementsFromSpec(
-  rootPath?: string
+  rootPath?: string,
+  featurePrefix?: string
 ): Promise<ParsedFeatureSpec> {
   try {
     const { readFile } = await import("node:fs/promises");
 
-    const specPath = await findFeatureSpecPath(rootPath);
+    const specPath = await findFeatureSpecPath(rootPath, featurePrefix);
 
     if (!specPath) {
       console.warn("Feature spec not found in any .claude/{prefix}/ folder");

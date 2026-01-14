@@ -63,6 +63,14 @@ export function getClaudeStorageRoot(claudeStorageId?: string): string | null {
   return join(CLAUDE_STORAGE_ROOT, claudeStorageId);
 }
 
+export function resolveClaudeStorageRoot(
+  claudeStorageId?: string,
+  storageRootOverride?: string
+): string | null {
+  if (storageRootOverride) return storageRootOverride;
+  return getClaudeStorageRoot(claudeStorageId);
+}
+
 function normalizePath(value: string): string {
   return value.replace(/\\/g, "/");
 }
@@ -96,11 +104,12 @@ function commandTouchesClaudeSettings(command: string): boolean {
 
 export function rewriteClaudeFilePath(
   value: string,
-  claudeStorageId?: string
+  claudeStorageId?: string,
+  storageRootOverride?: string
 ): string {
   if (!value) return value;
   if (isClaudeSettingsPath(value)) return value;
-  const storageRoot = getClaudeStorageRoot(claudeStorageId);
+  const storageRoot = resolveClaudeStorageRoot(claudeStorageId, storageRootOverride);
   if (!storageRoot) return value;
 
   const normalizedValue = normalizePath(value);
@@ -125,11 +134,12 @@ export function rewriteClaudeFilePath(
 
 export function rewriteClaudeCommand(
   command: string,
-  claudeStorageId?: string
+  claudeStorageId?: string,
+  storageRootOverride?: string
 ): string {
   if (!command) return command;
   if (commandTouchesClaudeSettings(command)) return command;
-  const storageRoot = getClaudeStorageRoot(claudeStorageId);
+  const storageRoot = resolveClaudeStorageRoot(claudeStorageId, storageRootOverride);
   if (!storageRoot) return command;
 
   const normalizedRoot = normalizePath(storageRoot);
