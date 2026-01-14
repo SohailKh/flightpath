@@ -1,0 +1,34 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - FLIGHTPATH_PROJECTS_DIR=/app/projects
+    volumes:
+      # Pipeline state persistence
+      - ./backend/.flightpath:/app/backend/.flightpath
+      # Claude artifacts and logs
+      - ./backend/.claude:/app/backend/.claude
+      # Generated projects (accessible from host)
+      - ./projects:/app/projects
+    working_dir: /app/backend
+    command: npx tsx src/index.ts
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      # Backend URL from browser perspective (localhost since ports are exposed)
+      - VITE_BACKEND_URL=http://localhost:8787
+    depends_on:
+      - backend
+    working_dir: /app/ui
+    command: bun run dev --host 0.0.0.0

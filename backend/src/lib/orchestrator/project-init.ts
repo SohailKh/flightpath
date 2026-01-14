@@ -42,7 +42,13 @@ function validateUniqueIds(items: Array<{ id: string }>, type: string): void {
 // when agents run with a different cwd (targetProjectPath)
 export const FLIGHTPATH_ROOT = resolve(import.meta.dirname, "..", "..", "..");
 
-const FLIGHTPATH_PROJECTS_DIR = "flightpath-projects";
+/**
+ * Get the root directory for generated projects.
+ * Supports FLIGHTPATH_PROJECTS_DIR env var for Docker/containerized environments.
+ */
+function getProjectsRoot(): string {
+  return process.env.FLIGHTPATH_PROJECTS_DIR || join(homedir(), "flightpath-projects");
+}
 
 /**
  * Sanitize a project name for use in directory paths
@@ -63,7 +69,7 @@ export function sanitizeProjectName(name: string): string {
  */
 export function generateTargetProjectPath(projectName: string): string {
   const sanitized = sanitizeProjectName(projectName);
-  return join(homedir(), FLIGHTPATH_PROJECTS_DIR, sanitized);
+  return join(getProjectsRoot(), sanitized);
 }
 
 /**
@@ -71,7 +77,7 @@ export function generateTargetProjectPath(projectName: string): string {
  */
 export function generateStagingProjectPath(pipelineId: string): string {
   const sanitized = sanitizeProjectName(`fp-staging-${pipelineId}`);
-  return join(homedir(), FLIGHTPATH_PROJECTS_DIR, sanitized);
+  return join(getProjectsRoot(), sanitized);
 }
 
 /**

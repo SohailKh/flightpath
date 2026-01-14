@@ -1,0 +1,44 @@
+# Dependencies (will be installed fresh in container)
+**/node_modules
+
+# Git
+**/.git
+**/.gitignore
+
+# Build artifacts
+**/dist
+
+# Persisted data (mounted as volumes)
+backend/.flightpath
+backend/.claude
+projects/
+
+# IDE and editor files
+**/.vscode
+**/.idea
+**/*.swp
+**/*.swo
+
+# Logs
+**/*.log
+**/npm-debug.log*
+
+# Environment files (pass via docker-compose)
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Test and coverage
+**/coverage
+**/.nyc_output
+
+# OS files
+**/.DS_Store
+**/Thumbs.db
+
+# Playwright cache (will be installed fresh)
+**/playwright-report
+**/test-results
+
+# Plans and temporary files
+**/.claude/plans
