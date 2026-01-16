@@ -1,0 +1,473 @@
+{
+  "schemaVersion": 3,
+  "featureId": "feat-isolation",
+  "featureName": "Piano Isolation",
+  "prefix": "isolation",
+  "summary": "Extract piano audio from uploaded file using fal.ai SAM Audio API",
+  "dependencies": ["feat-upload"],
+  "generatedAt": "2026-01-16T00:00:00.000Z",
+  "stack": {
+    "platform": "web",
+    "frontend": "next.js",
+    "backend": "node.js",
+    "database": "sqlite"
+  },
+  "requirements": [
+    {
+      "id": "ISO-001",
+      "title": "Trigger isolation on job status change",
+      "description": "When a job transitions to UPLOADED status, automatically begin the isolation process by updating status to ISOLATING",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "Job status transitions from UPLOADED to ISOLATING",
+        "Transition is triggered automatically after successful upload",
+        "Job progress is set to 0 when entering ISOLATING state"
+      ]
+    },
+    {
+      "id": "ISO-002",
+      "title": "Call fal.ai SAM Audio API",
+      "description": "Send the uploaded audio file to fal.ai SAM Audio API with 'piano playing' prompt to isolate piano audio",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "API call uses @fal-ai/client package with fal.subscribe method",
+        "Model endpoint is 'fal-ai/sam-audio/separate'",
+        "Input includes audio_url pointing to the uploaded file",
+        "Prompt is set to 'piano playing'",
+        "Output format is set to 'wav'",
+        "FAL_KEY environment variable is used for authentication"
+      ]
+    },
+    {
+      "id": "ISO-003",
+      "title": "Upload audio for API access",
+      "description": "Before calling SAM Audio API, upload the local audio file to fal.ai storage to get a URL that the API can access",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "Local audio file is uploaded to fal.ai storage using fal.storage.upload",
+        "Returned URL is used as audio_url in the separation request",
+        "Upload progress is tracked and included in overall progress calculation"
+      ]
+    },
+    {
+      "id": "ISO-004",
+      "title": "Track and report progress",
+      "description": "Update job progress during isolation to provide user feedback on long-running operations",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "Progress updates during file upload to fal.ai (0-30%)",
+        "Progress updates during API processing via onQueueUpdate callback (30-90%)",
+        "Progress set to 100% when isolation completes successfully",
+        "Progress updates are persisted to database",
+        "Frontend can poll or receive progress updates"
+      ]
+    },
+    {
+      "id": "ISO-005",
+      "title": "Download and store isolated piano audio",
+      "description": "Download the target (piano) audio from the API response URL and store it locally",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "Target audio URL from API response is downloaded",
+        "File is saved to local storage with predictable path",
+        "Path format: uploads/{jobId}/isolated_piano.wav",
+        "Job record updated with isolated_piano_path",
+        "Downloaded file is valid WAV audio"
+      ]
+    },
+    {
+      "id": "ISO-006",
+      "title": "Transition to next state on success",
+      "description": "After successful isolation, transition job to TRANSCRIBING status to continue the pipeline",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "Job status changes from ISOLATING to TRANSCRIBING",
+        "Transition only occurs after isolated audio is downloaded and stored",
+        "Job updated_at timestamp is refreshed"
+      ]
+    },
+    {
+      "id": "ISO-007",
+      "title": "Handle API errors gracefully",
+      "description": "Catch and handle errors from the fal.ai API with appropriate user-facing messages",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "API errors are caught and logged with full details",
+        "Job transitions to FAILED status on error",
+        "Job error_code field set to categorized error type",
+        "Job error_message field set to user-friendly message",
+        "Error types: ISOLATION_API_ERROR, ISOLATION_TIMEOUT, ISOLATION_RATE_LIMIT, ISOLATION_INVALID_AUDIO"
+      ]
+    },
+    {
+      "id": "ISO-008",
+      "title": "Implement retry with exponential backoff",
+      "description": "Retry failed API calls with exponential backoff for transient errors",
+      "type": "functional",
+      "priority": "should",
+      "acceptanceCriteria": [
+        "Retry up to 3 times on transient errors (network, rate limit)",
+        "Backoff delays: 1s, 2s, 4s",
+        "Do not retry on permanent errors (invalid audio, authentication)",
+        "Log each retry attempt"
+      ]
+    },
+    {
+      "id": "ISO-009",
+      "title": "API route for isolation status",
+      "description": "Provide an API endpoint for the frontend to check isolation progress and status",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "GET /api/jobs/[id] returns job with current status and progress",
+        "Response includes isolated_piano_path when available",
+        "Response includes error details when in FAILED state"
+      ]
+    },
+    {
+      "id": "ISO-010",
+      "title": "UI progress display",
+      "description": "Display isolation progress in the stepper UI on the job progress page",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "Stepper shows 5 steps: UPLOAD → ISOLATE → TRANSCRIBE → NOTATE → DONE",
+        "Current step (ISOLATE) is highlighted with Swiss Red (#FF3000)",
+        "Progress percentage displayed for current step",
+        "Step indicator shows filled state for completed steps",
+        "Frontend polls job status every 2 seconds during processing"
+      ]
+    },
+    {
+      "id": "ISO-011",
+      "title": "Configuration via environment variables",
+      "description": "Support configuration of fal.ai API settings via environment variables",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "FAL_KEY environment variable for API authentication (required)",
+        "Application fails to start with clear error if FAL_KEY is missing",
+        "Optional: FAL_ACCELERATION env var to override 'balanced' default"
+      ]
+    },
+    {
+      "id": "ISO-012",
+      "title": "Handle weak piano signal",
+      "description": "Proceed with processing even if the isolated piano audio may be weak or mostly silent",
+      "type": "functional",
+      "priority": "should",
+      "acceptanceCriteria": [
+        "Do not fail if target audio appears quiet",
+        "Quality will be evaluated in preview phase",
+        "Optional: Log warning if isolated audio RMS level is below threshold"
+      ]
+    },
+    {
+      "id": "ISO-013",
+      "title": "Timeout handling",
+      "description": "Handle API timeout for long-running isolation requests",
+      "type": "functional",
+      "priority": "must",
+      "acceptanceCriteria": [
+        "Set reasonable timeout (5 minutes) for isolation request",
+        "On timeout, transition job to FAILED with error_code ISOLATION_TIMEOUT",
+        "Error message: 'ISOLATION TIMED OUT. TRY A SHORTER FILE.'"
+      ]
+    },
+    {
+      "id": "ISO-014",
+      "title": "Clean up on failure",
+      "description": "Clean up any partial files when isolation fails",
+      "type": "functional",
+      "priority": "should",
+      "acceptanceCriteria": [
+        "Delete any partially downloaded files on failure",
+        "Do not leave orphaned files in storage",
+        "Original uploaded file is preserved for retry"
+      ]
+    }
+  ],
+  "dataModel": {
+    "tables": [
+      {
+        "name": "jobs",
+        "description": "Extended with isolation-specific fields (table created in upload feature)",
+        "columns": [
+          {
+            "name": "status",
+            "type": "TEXT",
+            "constraints": "NOT NULL",
+            "notes": "Add 'ISOLATING' to valid status values"
+          },
+          {
+            "name": "isolated_piano_path",
+            "type": "TEXT",
+            "constraints": "NULL",
+            "notes": "Local path to downloaded isolated piano WAV"
+          },
+          {
+            "name": "isolation_started_at",
+            "type": "TEXT",
+            "constraints": "NULL",
+            "notes": "ISO timestamp when isolation began"
+          },
+          {
+            "name": "isolation_completed_at",
+            "type": "TEXT",
+            "constraints": "NULL",
+            "notes": "ISO timestamp when isolation finished"
+          }
+        ]
+      }
+    ],
+    "statusValues": ["UPLOADED", "ISOLATING", "TRANSCRIBING", "NOTATING", "DONE", "FAILED"]
+  },
+  "apiEndpoints": [
+    {
+      "method": "GET",
+      "path": "/api/jobs/[id]",
+      "description": "Get job status including isolation progress (existing endpoint, isolation uses it)",
+      "request": {
+        "params": {
+          "id": "string (job UUID)"
+        }
+      },
+      "response": {
+        "success": {
+          "id": "string",
+          "status": "UPLOADED | ISOLATING | TRANSCRIBING | NOTATING | DONE | FAILED",
+          "progress": "number (0-100)",
+          "input_file_name": "string",
+          "isolated_piano_path": "string | null",
+          "error_code": "string | null",
+          "error_message": "string | null",
+          "created_at": "string (ISO)",
+          "updated_at": "string (ISO)"
+        },
+        "error": {
+          "error": "string",
+          "message": "string"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/jobs/[id]/retry",
+      "description": "Retry a failed job from the isolation step",
+      "request": {
+        "params": {
+          "id": "string (job UUID)"
+        }
+      },
+      "response": {
+        "success": {
+          "id": "string",
+          "status": "ISOLATING",
+          "message": "Job retry initiated"
+        },
+        "error": {
+          "error": "string",
+          "message": "string"
+        }
+      }
+    }
+  ],
+  "components": [
+    {
+      "name": "IsolationService",
+      "type": "service",
+      "path": "src/services/isolation.ts",
+      "description": "Service handling fal.ai SAM Audio API integration",
+      "responsibilities": [
+        "Upload audio to fal.ai storage",
+        "Call SAM Audio separation endpoint",
+        "Track progress via onQueueUpdate",
+        "Download isolated audio to local storage",
+        "Handle errors and retries"
+      ],
+      "dependencies": ["@fal-ai/client", "database"]
+    },
+    {
+      "name": "JobProgressStepper",
+      "type": "ui-component",
+      "path": "src/components/JobProgressStepper.tsx",
+      "description": "Visual stepper showing job processing stages",
+      "responsibilities": [
+        "Display 5 processing steps with labels",
+        "Highlight current step with accent color",
+        "Show progress percentage for active step",
+        "Mark completed steps with filled indicator"
+      ],
+      "props": {
+        "currentStep": "number (1-5)",
+        "progress": "number (0-100)",
+        "status": "string"
+      }
+    },
+    {
+      "name": "JobProgressPage",
+      "type": "page",
+      "path": "src/app/jobs/[id]/page.tsx",
+      "description": "Page showing real-time job progress during processing",
+      "responsibilities": [
+        "Poll job status every 2 seconds",
+        "Display JobProgressStepper with current state",
+        "Show error message if job fails",
+        "Provide retry button for failed jobs",
+        "Redirect to results when job completes"
+      ]
+    }
+  ],
+  "fileStructure": [
+    {
+      "path": "src/services/isolation.ts",
+      "description": "fal.ai SAM Audio integration service"
+    },
+    {
+      "path": "src/lib/fal-client.ts",
+      "description": "Configured fal.ai client instance"
+    },
+    {
+      "path": "src/components/JobProgressStepper.tsx",
+      "description": "Step indicator component for job progress"
+    },
+    {
+      "path": "src/app/jobs/[id]/page.tsx",
+      "description": "Job progress/results page"
+    },
+    {
+      "path": "src/app/api/jobs/[id]/route.ts",
+      "description": "Job status API endpoint (may extend existing)"
+    },
+    {
+      "path": "src/app/api/jobs/[id]/retry/route.ts",
+      "description": "Job retry API endpoint"
+    }
+  ],
+  "userFlows": [
+    {
+      "name": "Successful Piano Isolation",
+      "steps": [
+        "Upload completes, job status is UPLOADED",
+        "System automatically triggers isolation process",
+        "Job status changes to ISOLATING, progress starts at 0%",
+        "Audio file is uploaded to fal.ai storage (progress 0-30%)",
+        "SAM Audio API is called with 'piano playing' prompt",
+        "Progress updates received via queue callbacks (30-90%)",
+        "API returns target (piano) and residual audio URLs",
+        "Piano audio is downloaded to local storage (90-100%)",
+        "Job status changes to TRANSCRIBING",
+        "Frontend automatically polls and updates stepper UI"
+      ]
+    },
+    {
+      "name": "Failed Isolation with Retry",
+      "steps": [
+        "Isolation process begins",
+        "API call fails (network error, rate limit, etc.)",
+        "System retries up to 3 times with exponential backoff",
+        "If all retries fail, job status changes to FAILED",
+        "error_code and error_message are set on job",
+        "Frontend displays error with retry button",
+        "User clicks retry",
+        "POST /api/jobs/[id]/retry is called",
+        "Job status resets to ISOLATING, process restarts"
+      ]
+    }
+  ],
+  "errorHandling": [
+    {
+      "code": "ISOLATION_API_ERROR",
+      "message": "AUDIO FILE COULD NOT BE PROCESSED.",
+      "cause": "fal.ai API returned an error response",
+      "action": "Show error, allow retry"
+    },
+    {
+      "code": "ISOLATION_TIMEOUT",
+      "message": "ISOLATION TIMED OUT. TRY A SHORTER FILE.",
+      "cause": "API request exceeded 5 minute timeout",
+      "action": "Show error, suggest shorter file"
+    },
+    {
+      "code": "ISOLATION_RATE_LIMIT",
+      "message": "SERVICE BUSY. PLEASE TRY AGAIN.",
+      "cause": "fal.ai rate limit exceeded after retries",
+      "action": "Show error, allow retry after delay"
+    },
+    {
+      "code": "ISOLATION_INVALID_AUDIO",
+      "message": "AUDIO FILE IS INVALID OR CORRUPTED.",
+      "cause": "fal.ai could not process the audio format",
+      "action": "Show error, suggest different file"
+    },
+    {
+      "code": "ISOLATION_DOWNLOAD_FAILED",
+      "message": "COULD NOT DOWNLOAD ISOLATED AUDIO.",
+      "cause": "Failed to download result from fal.ai URL",
+      "action": "Show error, allow retry"
+    },
+    {
+      "code": "FAL_KEY_MISSING",
+      "message": "API KEY NOT CONFIGURED.",
+      "cause": "FAL_KEY environment variable not set",
+      "action": "Application startup failure, log clear error"
+    }
+  ],
+  "testingNotes": {
+    "unitTests": [
+      "IsolationService.uploadToFalStorage - mock fal.storage.upload",
+      "IsolationService.isolatePiano - mock fal.subscribe with various responses",
+      "IsolationService.downloadIsolatedAudio - mock fetch for URL download",
+      "Progress calculation - verify progress percentages at each stage",
+      "Retry logic - verify exponential backoff timing and max attempts",
+      "Error categorization - verify correct error codes for different failures"
+    ],
+    "integrationTests": [
+      "Full isolation flow with real fal.ai API (requires FAL_KEY)",
+      "Job status transitions during isolation",
+      "Progress updates persisted to database",
+      "Frontend polling and UI updates"
+    ],
+    "fixtures": [
+      "Mock fal.ai success response with target/residual URLs",
+      "Mock fal.ai error responses for each error type",
+      "Sample audio file for upload testing"
+    ],
+    "envVars": [
+      {
+        "name": "FAL_KEY",
+        "required": true,
+        "description": "fal.ai API key for SAM Audio"
+      }
+    ]
+  },
+  "designTokens": {
+    "colors": {
+      "stepActive": "#FF3000",
+      "stepComplete": "#000000",
+      "stepPending": "#F2F2F2",
+      "progressTrack": "#F2F2F2",
+      "progressFill": "#000000",
+      "errorBackground": "#FFFFFF",
+      "errorBorder": "#000000",
+      "errorAccent": "#FF3000"
+    },
+    "typography": {
+      "stepLabel": "font-bold uppercase text-sm tracking-wide",
+      "progressText": "font-mono text-lg",
+      "errorTitle": "font-black uppercase text-xl",
+      "errorMessage": "font-normal text-base"
+    },
+    "spacing": {
+      "stepperGap": "2rem",
+      "progressBarHeight": "4px"
+    }
+  }
+}

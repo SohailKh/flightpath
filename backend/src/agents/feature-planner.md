@@ -3,7 +3,7 @@ name: feature-planner
 description: Use this agent to plan the implementation for a requirement. This agent receives exploration context from feature-explorer, selects the highest-priority pending requirement, creates a detailed implementation plan using the exploration results, and automatically chains to the executor agent.
 model: opus
 tools: Read, Write, Edit, Glob, Grep, Task, Bash
-skills: feature-workflow, swiss-ux
+skills: feature-workflow
 ---
 
 ## Token-safe file access protocol (MANDATORY)

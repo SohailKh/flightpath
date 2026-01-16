@@ -1,0 +1,392 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat-transcription",
+  "featureName": "Audio to MIDI Transcription",
+  "createdAt": "2026-01-16T00:00:00.000Z",
+  "prerequisites": {
+    "services": [
+      {
+        "name": "Python Worker",
+        "checkCommand": "curl -s http://localhost:5001/health",
+        "expectedResponse": "{\"status\":\"ok\",\"modelLoaded\":true}",
+        "startCommand": "cd worker && python app.py",
+        "notes": "Worker must be running with Basic Pitch model loaded"
+      },
+      {
+        "name": "Next.js Dev Server",
+        "checkCommand": "curl -s http://localhost:3000/api/health",
+        "expectedResponse": "ok",
+        "startCommand": "npm run dev",
+        "notes": "Next.js app must be running"
+      }
+    ],
+    "fixtures": [
+      {
+        "name": "Test audio file",
+        "path": "test/fixtures/audio/piano_sample.wav",
+        "description": "Short piano audio clip for testing transcription",
+        "required": true
+      },
+      {
+        "name": "Pre-isolated audio",
+        "path": "test/fixtures/audio/isolated_piano.wav",
+        "description": "Already-isolated piano audio to test transcription without isolation step",
+        "required": true
+      }
+    ],
+    "database": {
+      "seedRequired": false,
+      "notes": "Tests create their own job records"
+    }
+  },
+  "smokeTests": [
+    {
+      "id": "smoke-transcription-1",
+      "name": "Python worker health check",
+      "description": "Verify the Python transcription worker is running and has loaded the Basic Pitch model",
+      "priority": 1,
+      "type": "api",
+      "steps": [
+        {
+          "action": "request",
+          "method": "GET",
+          "url": "http://localhost:5001/health",
+          "expectedStatus": 200
+        },
+        {
+          "action": "assert",
+          "field": "body.status",
+          "equals": "ok"
+        },
+        {
+          "action": "assert",
+          "field": "body.modelLoaded",
+          "equals": true
+        }
+      ],
+      "passCondition": "Worker responds with status=ok and modelLoaded=true",
+      "failureMessage": "Python transcription worker is not running or model failed to load. Run: cd worker && python app.py"
+    },
+    {
+      "id": "smoke-transcription-2",
+      "name": "Direct worker transcription",
+      "description": "Test the Python worker can transcribe an audio file to MIDI",
+      "priority": 1,
+      "type": "api",
+      "steps": [
+        {
+          "action": "request",
+          "method": "POST",
+          "url": "http://localhost:5001/transcribe",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "audioPath": "${CWD}/test/fixtures/audio/isolated_piano.wav",
+            "outputPath": "${CWD}/test/output/smoke_test.mid",
+            "options": {}
+          },
+          "expectedStatus": 200,
+          "timeout": 60000
+        },
+        {
+          "action": "assert",
+          "field": "body.success",
+          "equals": true
+        },
+        {
+          "action": "assert",
+          "field": "body.noteCount",
+          "greaterThan": 0
+        },
+        {
+          "action": "assert",
+          "field": "body.durationSeconds",
+          "greaterThan": 0
+        },
+        {
+          "action": "fileExists",
+          "path": "${CWD}/test/output/smoke_test.mid"
+        }
+      ],
+      "cleanup": [
+        {
+          "action": "deleteFile",
+          "path": "${CWD}/test/output/smoke_test.mid"
+        }
+      ],
+      "passCondition": "Worker returns success with noteCount > 0 and MIDI file is created",
+      "failureMessage": "Transcription failed. Check Basic Pitch installation and audio file format."
+    },
+    {
+      "id": "smoke-transcription-3",
+      "name": "Worker handles missing audio file",
+      "description": "Verify the worker returns appropriate error for missing audio file",
+      "priority": 2,
+      "type": "api",
+      "steps": [
+        {
+          "action": "request",
+          "method": "POST",
+          "url": "http://localhost:5001/transcribe",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "audioPath": "/nonexistent/audio.wav",
+            "outputPath": "${CWD}/test/output/should_not_exist.mid",
+            "options": {}
+          },
+          "expectedStatus": 400
+        },
+        {
+          "action": "assert",
+          "field": "body.success",
+          "equals": false
+        },
+        {
+          "action": "assert",
+          "field": "body.error",
+          "equals": "AUDIO_NOT_FOUND"
+        }
+      ],
+      "passCondition": "Worker returns 400 with error=AUDIO_NOT_FOUND",
+      "failureMessage": "Worker did not properly handle missing audio file"
+    },
+    {
+      "id": "smoke-transcription-4",
+      "name": "API route triggers transcription",
+      "description": "Test the Next.js API route can trigger transcription for a job",
+      "priority": 1,
+      "type": "integration",
+      "setup": [
+        {
+          "action": "createJob",
+          "status": "ISOLATED",
+          "isolatedPianoPath": "${CWD}/test/fixtures/audio/isolated_piano.wav"
+        }
+      ],
+      "steps": [
+        {
+          "action": "request",
+          "method": "POST",
+          "url": "http://localhost:3000/api/jobs/${jobId}/transcribe",
+          "expectedStatus": 200,
+          "timeout": 60000
+        },
+        {
+          "action": "assert",
+          "field": "body.success",
+          "equals": true
+        },
+        {
+          "action": "assert",
+          "field": "body.noteCount",
+          "greaterThan": 0
+        },
+        {
+          "action": "request",
+          "method": "GET",
+          "url": "http://localhost:3000/api/jobs/${jobId}",
+          "expectedStatus": 200
+        },
+        {
+          "action": "assert",
+          "field": "body.status",
+          "oneOf": ["TRANSCRIBED", "NOTATING"]
+        },
+        {
+          "action": "assert",
+          "field": "body.midiPath",
+          "notNull": true
+        }
+      ],
+      "cleanup": [
+        {
+          "action": "deleteJob",
+          "jobId": "${jobId}"
+        }
+      ],
+      "passCondition": "API triggers transcription successfully and job status is updated",
+      "failureMessage": "API route failed to trigger transcription or update job status"
+    },
+    {
+      "id": "smoke-transcription-5",
+      "name": "API rejects invalid job state",
+      "description": "Verify the API rejects transcription for jobs not in ISOLATED state",
+      "priority": 2,
+      "type": "api",
+      "setup": [
+        {
+          "action": "createJob",
+          "status": "UPLOADED"
+        }
+      ],
+      "steps": [
+        {
+          "action": "request",
+          "method": "POST",
+          "url": "http://localhost:3000/api/jobs/${jobId}/transcribe",
+          "expectedStatus": 400
+        },
+        {
+          "action": "assert",
+          "field": "body.error",
+          "equals": "INVALID_STATE"
+        }
+      ],
+      "cleanup": [
+        {
+          "action": "deleteJob",
+          "jobId": "${jobId}"
+        }
+      ],
+      "passCondition": "API returns 400 INVALID_STATE for non-ISOLATED job",
+      "failureMessage": "API did not reject transcription for invalid job state"
+    },
+    {
+      "id": "smoke-transcription-6",
+      "name": "API handles nonexistent job",
+      "description": "Verify the API returns 404 for nonexistent job ID",
+      "priority": 2,
+      "type": "api",
+      "steps": [
+        {
+          "action": "request",
+          "method": "POST",
+          "url": "http://localhost:3000/api/jobs/00000000-0000-0000-0000-000000000000/transcribe",
+          "expectedStatus": 404
+        },
+        {
+          "action": "assert",
+          "field": "body.error",
+          "equals": "JOB_NOT_FOUND"
+        }
+      ],
+      "passCondition": "API returns 404 JOB_NOT_FOUND",
+      "failureMessage": "API did not return 404 for nonexistent job"
+    },
+    {
+      "id": "smoke-transcription-7",
+      "name": "MIDI file is valid",
+      "description": "Verify the generated MIDI file can be parsed and contains expected data",
+      "priority": 2,
+      "type": "validation",
+      "steps": [
+        {
+          "action": "request",
+          "method": "POST",
+          "url": "http://localhost:5001/transcribe",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "audioPath": "${CWD}/test/fixtures/audio/isolated_piano.wav",
+            "outputPath": "${CWD}/test/output/validation_test.mid",
+            "options": {}
+          },
+          "expectedStatus": 200,
+          "timeout": 60000
+        },
+        {
+          "action": "validateMidi",
+          "path": "${CWD}/test/output/validation_test.mid",
+          "checks": [
+            "hasNotes",
+            "validTiming",
+            "singleTrack"
+          ]
+        }
+      ],
+      "cleanup": [
+        {
+          "action": "deleteFile",
+          "path": "${CWD}/test/output/validation_test.mid"
+        }
+      ],
+      "passCondition": "Generated MIDI file is valid and contains notes with proper timing",
+      "failureMessage": "Generated MIDI file is invalid or corrupted"
+    },
+    {
+      "id": "smoke-transcription-8",
+      "name": "Worker handles silent audio",
+      "description": "Verify the worker gracefully handles audio with no detectable notes",
+      "priority": 3,
+      "type": "api",
+      "steps": [
+        {
+          "action": "request",
+          "method": "POST",
+          "url": "http://localhost:5001/transcribe",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "audioPath": "${CWD}/test/fixtures/audio/silent_audio.wav",
+            "outputPath": "${CWD}/test/output/silent_test.mid",
+            "options": {}
+          },
+          "expectedStatus": 200,
+          "timeout": 60000
+        },
+        {
+          "action": "assert",
+          "field": "body.success",
+          "equals": true
+        },
+        {
+          "action": "assert",
+          "field": "body.noteCount",
+          "equals": 0
+        }
+      ],
+      "cleanup": [
+        {
+          "action": "deleteFile",
+          "path": "${CWD}/test/output/silent_test.mid"
+        }
+      ],
+      "passCondition": "Worker returns success with noteCount=0 for silent audio",
+      "failureMessage": "Worker did not handle silent audio correctly"
+    }
+  ],
+  "manualChecks": [
+    {
+      "id": "manual-transcription-1",
+      "name": "Audio quality affects transcription",
+      "description": "Upload a song with clear piano, then one with muddy piano. Verify transcription quality differs appropriately.",
+      "steps": [
+        "Upload a recording with clear, isolated piano playing",
+        "Complete the full pipeline to transcription",
+        "Note the transcription quality and note count",
+        "Upload a recording with heavily mixed/muddy piano",
+        "Complete the full pipeline to transcription",
+        "Compare transcription quality - clear recording should have cleaner results"
+      ]
+    },
+    {
+      "id": "manual-transcription-2",
+      "name": "Progress updates during transcription",
+      "description": "Verify the UI shows appropriate progress feedback during transcription",
+      "steps": [
+        "Start a job with a 30+ second audio file",
+        "Watch the progress UI during transcription step",
+        "Verify step indicator shows '03. TRANSCRIBE' as active",
+        "Verify progress updates are shown (if available from worker)"
+      ]
+    },
+    {
+      "id": "manual-transcription-3",
+      "name": "Error recovery",
+      "description": "Verify the system handles worker failures gracefully",
+      "steps": [
+        "Stop the Python worker (kill the process)",
+        "Attempt to transcribe a job",
+        "Verify appropriate error message is shown",
+        "Restart the Python worker",
+        "Retry the transcription",
+        "Verify transcription succeeds"
+      ]
+    }
+  ]
+}

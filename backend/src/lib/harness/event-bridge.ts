@@ -107,13 +107,30 @@ function formatStatusAction(toolName: string, input: unknown): string {
 /**
  * Infer phase from tool name for UI backward compatibility
  */
-function inferPhase(toolName: string): InferredPhase {
+function isTestingCommand(command: string): boolean {
+  const normalized = command.toLowerCase();
+  return (
+    normalized.includes("playwright:smoke") ||
+    normalized.includes("playwright:screenshot") ||
+    normalized.includes("playwright-smoke") ||
+    normalized.includes("playwright-screenshot")
+  );
+}
+
+function inferPhase(toolName: string, toolInput: unknown): InferredPhase {
   // Exploration tools
   if (["Glob", "Grep", "Read"].includes(toolName)) {
     return "exploring";
   }
   // Execution tools
-  if (["Write", "Edit", "Bash"].includes(toolName)) {
+  if (["Write", "Edit"].includes(toolName)) {
+    return "executing";
+  }
+  if (toolName === "Bash") {
+    const command = String((toolInput as { command?: unknown })?.command ?? "");
+    if (command && isTestingCommand(command)) {
+      return "testing";
+    }
     return "executing";
   }
   // Testing tools
@@ -189,7 +206,7 @@ export class EventBridge {
     this.toolStartTimes.set(toolUseId, Date.now());
 
     // Infer and emit phase transitions for UI backward compat
-    const newPhase = inferPhase(toolName);
+    const newPhase = inferPhase(toolName, toolInput);
     if (newPhase !== "unknown" && newPhase !== this.currentPhase) {
       // Emit phase completed for previous phase
       if (this.currentPhase !== "unknown") {

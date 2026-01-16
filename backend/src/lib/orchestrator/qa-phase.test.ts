@@ -196,13 +196,16 @@ describe("runQAPhase", () => {
   });
 
   it("completes QA and starts harness", async () => {
+    // Set specExists to true so runSpecGeneration finds the understanding file
+    specExists = true;
+
     sessionSend.mockResolvedValue({
       reply: "done",
       requiresUserInput: false,
       toolCalls: [
         {
           name: "Write",
-          args: { file_path: "/fake/root/.claude/pipeline/feature-spec.v3.json" },
+          args: { file_path: "/fake/root/.claude/feature-understanding.json" },
         },
       ],
     });
@@ -228,7 +231,7 @@ describe("runQAPhase", () => {
       "storage-id",
       parsedFeaturePrefix,
       "/fake/root",
-      false
+      true
     );
     expect(setRequirements).toHaveBeenCalled();
     expect(setEpics).toHaveBeenCalled();
@@ -247,7 +250,7 @@ describe("runQAPhase", () => {
       toolCalls: [
         {
           name: "Write",
-          args: { file_path: "/fake/root/.claude/pipeline/feature-spec.v3.json" },
+          args: { file_path: "/fake/root/.claude/feature-understanding.json" },
         },
       ],
     });

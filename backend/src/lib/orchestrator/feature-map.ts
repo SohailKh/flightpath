@@ -33,11 +33,10 @@ export interface FeatureMap {
   features: FeatureMapFeature[];
 }
 
-const FEATURE_MAP_DIR = "feature-map";
 const FEATURE_MAP_FILE = "feature-map.json";
 
 export function getFeatureMapPath(rootPath: string = FLIGHTPATH_ROOT): string {
-  return join(resolve(rootPath), ".claude", FEATURE_MAP_DIR, FEATURE_MAP_FILE);
+  return join(resolve(rootPath), ".claude", FEATURE_MAP_FILE);
 }
 
 export function getFeatureSpecPath(

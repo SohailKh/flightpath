@@ -5,7 +5,7 @@
  * Uses V2 Claude Agent SDK sessions for cleaner multi-turn conversation management.
  */
 
-import { existsSync, unlinkSync, readdirSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
   type Pipeline,
@@ -65,32 +65,66 @@ const MAX_AUTO_FEATURES = 5;
  * Clear any existing feature spec files to prevent contamination
  * from previous pipelines.
  */
-async function clearFeatureSpecs(rootPath?: string): Promise<void> {
-  const { readdir } = await import("node:fs/promises");
+async function clearFeatureSpecs(rootPath?: string, claudeStorageId?: string): Promise<void> {
+  const { readdir, rm } = await import("node:fs/promises");
+
+  // If we have a claudeStorageId, clear the project-specific storage folder
+  if (claudeStorageId) {
+    const projectClaudeDir = join(CLAUDE_STORAGE_ROOT, claudeStorageId);
+    if (existsSync(projectClaudeDir)) {
+      try {
+        await rm(projectClaudeDir, { recursive: true });
+        console.log(`[QA] Cleared project-specific .claude folder: ${projectClaudeDir}`);
+      } catch (error) {
+        console.warn(`[QA] Failed to clear ${projectClaudeDir}:`, error);
+      }
+    }
+  }
 
   const claudeRoot = rootPath ? resolve(rootPath) : FLIGHTPATH_ROOT;
   const claudeDir = join(claudeRoot, ".claude");
   if (!existsSync(claudeDir)) return;
 
+  // Clear root-level files
+  const understandingPath = join(claudeDir, "feature-understanding.json");
+  if (existsSync(understandingPath)) {
+    unlinkSync(understandingPath);
+    console.log("[QA] Cleared stale feature-understanding.json from .claude/");
+  }
+
+  const featureMapRootPath = join(claudeDir, "feature-map.json");
+  if (existsSync(featureMapRootPath)) {
+    unlinkSync(featureMapRootPath);
+    console.log("[QA] Cleared stale feature-map.json from .claude/");
+  }
+
   try {
     const entries = await readdir(claudeDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory() && entry.name !== "skills") {
-        const specPath = join(claudeDir, entry.name, "feature-spec.v3.json");
+        // Clear both new and legacy spec file names
+        const specPathNew = join(claudeDir, entry.name, "feature-spec.json");
+        const specPathLegacy = join(claudeDir, entry.name, "feature-spec.v3.json");
         const smokePath = join(claudeDir, entry.name, "smoke-tests.json");
-        const featureMapPath =
+        // Legacy: feature-map.json used to be in a feature-map/ subdirectory
+        const featureMapLegacyPath =
           entry.name === "feature-map"
             ? join(claudeDir, entry.name, "feature-map.json")
             : null;
-        if (existsSync(specPath)) {
-          unlinkSync(specPath);
+
+        if (existsSync(specPathNew)) {
+          unlinkSync(specPathNew);
+          console.log(`[QA] Cleared stale feature-spec.json from .claude/${entry.name}/`);
+        }
+        if (existsSync(specPathLegacy)) {
+          unlinkSync(specPathLegacy);
           console.log(`[QA] Cleared stale feature-spec.v3.json from .claude/${entry.name}/`);
         }
         if (existsSync(smokePath)) {
           unlinkSync(smokePath);
         }
-        if (featureMapPath && existsSync(featureMapPath)) {
-          unlinkSync(featureMapPath);
+        if (featureMapLegacyPath && existsSync(featureMapLegacyPath)) {
+          unlinkSync(featureMapLegacyPath);
           console.log("[QA] Cleared stale feature-map.json from .claude/feature-map/");
         }
       }
@@ -342,7 +376,20 @@ async function runQALoop(
         : nextMessage;
 
     logPhase("qa", "Sending QA message", outgoingMessage.slice(0, 120));
-    const result = await session.send(outgoingMessage);
+    let result;
+    try {
+      result = await session.send(outgoingMessage);
+    } catch (error) {
+      console.error(`${LOG.qa} Session send error:`, error);
+      throw error;
+    }
+
+    console.log(`${LOG.qa} Session result:`, {
+      requiresUserInput: result.requiresUserInput,
+      hasUserQuestions: !!result.userQuestions?.length,
+      toolCalls: result.toolCalls?.map(t => t.name),
+      replyPreview: result.reply?.slice(0, 500),
+    });
 
     processSessionResult(pipelineId, result);
     addToConversation(pipelineId, "assistant", result.reply);
@@ -431,11 +478,20 @@ export async function runQAPhase(
     isNewProject = true;
   }
 
+  // Generate a temporary claudeStorageId early so QA artifacts (feature-map.json,
+  // feature-understanding.json) are written to a project-specific folder
+  let claudeStorageId = pipeline.claudeStorageId;
+  if (!claudeStorageId) {
+    claudeStorageId = generateClaudeStorageId("qa", pipelineId);
+    setClaudeStorageId(pipelineId, claudeStorageId);
+    console.log(`${LOG.qa} Set temporary claudeStorageId: ${claudeStorageId}`);
+  }
+
   markRunning(pipelineId);
 
   console.log(`${LOG.qa} Starting QA phase for pipeline ${pipelineId.slice(0, 8)}`);
   if (isNewProject) {
-    await clearFeatureSpecs(QA_OUTPUT_ROOT);
+    await clearFeatureSpecs(QA_OUTPUT_ROOT, claudeStorageId);
   }
   appendEvent(pipelineId, "qa_started", { initialPrompt });
   updatePhase(pipelineId, { current: "qa" });
@@ -538,63 +594,118 @@ async function cleanupSession(pipelineId: string): Promise<void> {
 }
 
 /**
- * Find if any feature spec file exists in .claude/{prefix}/ folders
+ * Get path to feature understanding file
  */
-function findExistingSpecPath(): string | null {
-  return findExistingSpecPathAtRoot(FLIGHTPATH_ROOT);
-}
-
-function findExistingSpecPathAtRoot(rootPath: string): string | null {
-  const claudeDir = join(resolve(rootPath), ".claude");
-  if (!existsSync(claudeDir)) return null;
-
-  try {
-    const entries = readdirSync(claudeDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name !== "skills") {
-        const specPath = join(claudeDir, entry.name, "feature-spec.v3.json");
-        if (existsSync(specPath)) {
-          return specPath;
-        }
-      }
-    }
-  } catch {
-    // Ignore errors
-  }
-  return null;
+function getFeatureUnderstandingPath(rootPath?: string): string {
+  const root = rootPath ? resolve(rootPath) : FLIGHTPATH_ROOT;
+  return join(root, ".claude", "feature-understanding.json");
 }
 
 /**
  * Check if QA phase is complete
- * Uses file-based detection for reliability instead of string matching.
+ * QA is complete when feature-understanding.json has been written.
  */
 function isQAComplete(result: V2SessionTurnResult, rootPath?: string): boolean {
-  // Primary: Check if agent wrote to the spec file via tool calls
-  const wroteSpecFile = result.toolCalls?.some(
+  // Primary: Check if agent wrote to the understanding file via tool calls
+  const wroteUnderstandingFile = result.toolCalls?.some(
     (call) =>
       call.name === "Write" &&
-      String((call.args as Record<string, unknown>)?.file_path || "").includes("feature-spec.v3.json")
+      String((call.args as Record<string, unknown>)?.file_path || "").includes("feature-understanding.json")
   );
 
-  if (wroteSpecFile) {
-    console.log(`${LOG.qa} Checking completion... result=true (spec file written by agent)`);
+  if (wroteUnderstandingFile) {
+    console.log(`${LOG.qa} Checking completion... result=true (understanding file written by agent)`);
     return true;
   }
 
-  // Fallback: Check actual file existence in any .claude/{prefix}/ folder
-  const specPath = rootPath ? findExistingSpecPathAtRoot(rootPath) : findExistingSpecPath();
-
-  if (specPath) {
-    console.log(`${LOG.qa} Checking completion... result=true (spec file exists at ${specPath})`);
+  // Fallback: Check actual file existence
+  const understandingPath = getFeatureUnderstandingPath(rootPath);
+  if (existsSync(understandingPath)) {
+    console.log(`${LOG.qa} Checking completion... result=true (understanding file exists at ${understandingPath})`);
     return true;
   }
 
-  console.log(`${LOG.qa} Checking completion... result=false (no spec file)`);
+  console.log(`${LOG.qa} Checking completion... result=false (no understanding file)`);
   return false;
 }
 
 /**
- * Handle QA completion - parse requirements and start the loop
+ * Run the feature-spec agent to generate structured spec from understanding
+ */
+async function runSpecGeneration(
+  pipelineId: string,
+  targetProjectPath: string,
+  featurePrefix?: string
+): Promise<void> {
+  const pipeline = getPipeline(pipelineId);
+  if (!pipeline) return;
+
+  const understandingPath = getFeatureUnderstandingPath(QA_OUTPUT_ROOT);
+  if (!existsSync(understandingPath)) {
+    throw new Error("Feature understanding file not found");
+  }
+
+  appendEvent(pipelineId, "status_update", {
+    action: "Generating feature specification from understanding...",
+    phase: "qa",
+    statusSource: "orchestrator",
+  });
+
+  const toolCallbacks = createToolCallbacks(pipelineId, "qa", "feature-spec");
+
+  // Create a non-interactive session for the spec agent
+  const session = await createV2Session({
+    agentName: "feature-spec",
+    pipelineId,
+    targetProjectPath,
+    claudeStorageId: pipeline.claudeStorageId,
+    claudeStorageRootOverride: QA_STORAGE_ROOT,
+    isNewProject: false,
+    toolCallbacks,
+    maxTurns: 100,
+  });
+
+  try {
+    appendEvent(pipelineId, "agent_prompt", {
+      prompt: session.systemPrompt,
+      agentName: "feature-spec",
+      phase: "qa",
+    });
+
+    // Send the understanding file path to the spec agent
+    const prompt = featurePrefix
+      ? `Generate the feature specification for feature "${featurePrefix}" from the understanding document at: ${understandingPath}`
+      : `Generate the feature specification from the understanding document at: ${understandingPath}`;
+
+    logPhase("qa", "Running feature-spec agent", prompt.slice(0, 100));
+    const result = await session.send(prompt);
+
+    processSessionResult(pipelineId, result);
+    addToConversation(pipelineId, "assistant", result.reply);
+
+    appendEvent(pipelineId, "agent_message", {
+      content: result.reply,
+      streaming: false,
+      agentName: "feature-spec",
+    });
+
+    // Verify spec was generated
+    const specWritten = result.toolCalls?.some(
+      (call) =>
+        call.name === "Write" &&
+        String((call.args as Record<string, unknown>)?.file_path || "").includes("feature-spec.json")
+    );
+
+    if (!specWritten) {
+      console.warn(`${LOG.qa} feature-spec agent did not write a spec file`);
+    }
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Handle QA completion - run spec generation, then parse requirements and start the loop
  */
 async function onQAComplete(
   pipelineId: string,
@@ -602,19 +713,23 @@ async function onQAComplete(
 ): Promise<void> {
   const pipeline = getPipeline(pipelineId);
 
-  appendEvent(pipelineId, "qa_completed", {});
-  appendEvent(pipelineId, "requirements_ready", {
-    message: "Requirements have been generated",
-  });
-
   const primaryFeature = featureMap ? selectPrimaryFeature(featureMap) : null;
   if (primaryFeature) {
     appendEvent(pipelineId, "status_update", {
-      action: `Selected feature "${primaryFeature.name}" (${primaryFeature.prefix}) for implementation`,
+      action: `Selected feature "${primaryFeature.name}" (${primaryFeature.prefix}) for spec generation`,
       phase: "qa",
       statusSource: "orchestrator",
     });
   }
+
+  // Run feature-spec agent to generate structured requirements from understanding
+  const specTargetPath = pipeline?.targetProjectPath || QA_OUTPUT_ROOT;
+  await runSpecGeneration(pipelineId, specTargetPath, primaryFeature?.prefix);
+
+  appendEvent(pipelineId, "qa_completed", {});
+  appendEvent(pipelineId, "requirements_ready", {
+    message: "Requirements have been generated",
+  });
 
   // Parse requirements, epics, project name, and feature prefix from the feature spec
   let specRoot = QA_OUTPUT_ROOT;
@@ -673,7 +788,9 @@ async function onQAComplete(
   setTargetProjectPath(pipelineId, targetPath);
 
   const cleanupSource = pipeline?.isNewProject ?? false;
-  const shouldCleanupSource = cleanupSource && specRoot !== QA_OUTPUT_ROOT;
+  const isStagingSpecRoot = specRoot === QA_OUTPUT_ROOT;
+  const shouldCleanupSource =
+    isStagingSpecRoot || (cleanupSource && specRoot !== QA_OUTPUT_ROOT);
 
   // Create target directory and copy feature spec to backend/.claude storage
   await initializeTargetProject(

@@ -192,10 +192,11 @@ EOF
 ### Step 2: Prepare Testing Environment
 
 **For all web testing (Bash required):**
-- Use a LIVE base URL (set `BASE_URL` or pass `--baseUrl` to scripts)
-- Ensure the app is already running at that URL (do not rely on MCP tools)
+- Use the runtime-instantiator skill to start the app and emit `BASE_URL`
+- If the skill is missing or stale, create/update it at `.claude/skills/runtime-instantiator`
+- Start the runtime via Bash and export `BASE_URL` before tests
 - Use the Playwright Bash scripts to drive navigation and capture evidence
-- If the base URL is unknown, ask the user before proceeding
+- Do NOT ask the user for `BASE_URL` unless startup fails after reasonable attempts
 
 **For backend/API testing:**
 - Check if server is already running using the platform's `healthCheckUrl` from Project Context:
@@ -217,11 +218,18 @@ EOF
 ### Step 2.5: Test Command Wrapper (REQUIRED)
 Run deterministic scripts via Bash (no ad-hoc pipelines):
 ```bash
+# Resolve BASE_URL via runtime-instantiator skill
+BASE_URL=$(bash .claude/skills/runtime-instantiator/scripts/start.sh | sed -n 's/^BASE_URL=//p' | tail -1)
+export BASE_URL
+
 # Smoke tests (optionally scope with --testIds)
 bun run playwright:smoke -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --testIds "$TEST_IDS"
 
 # Screenshot capture (always saves to artifacts)
 bun run playwright:screenshot -- --baseUrl "$BASE_URL" --featurePrefix "$FEATURE_PREFIX" --runId "$RUN_ID" --claudeStorageId "$CLAUDE_STORAGE_ID" --name smoke-home
+
+# Stop runtime when done
+bash .claude/skills/runtime-instantiator/scripts/stop.sh
 ```
 If you still need to wrap commands, use:
 `bun run claude:run cmd --runId <runId> --name tests -- <command>`

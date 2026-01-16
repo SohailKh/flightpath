@@ -116,21 +116,45 @@ export async function initializeTargetProject(
   await execAsync("git init", { cwd: targetPath });
   console.log(`[Orchestrator] Initialized git repository at ${targetPath}`);
 
-  const targetSpec = join(claudeDir, "feature-spec.v3.json");
   const targetSmoke = join(claudeDir, "smoke-tests.json");
 
   const specRoot = sourceRoot ? resolve(sourceRoot) : FLIGHTPATH_ROOT;
+  const fallbackSmoke = join(
+    targetPath,
+    ".claude",
+    featurePrefix,
+    "smoke-tests.json"
+  );
 
-  if (!existsSync(targetSpec)) {
-    // Copy feature spec from source root to backend .claude storage
-    const sourceSpec = join(specRoot, ".claude", featurePrefix, "feature-spec.v3.json");
+  // Copy feature spec (check for both new and legacy formats)
+  const specFileNames = ["feature-spec.json", "feature-spec.v3.json"];
+  let specCopied = false;
+
+  for (const specFileName of specFileNames) {
+    const targetSpec = join(claudeDir, specFileName);
+    if (existsSync(targetSpec)) {
+      specCopied = true;
+      break;
+    }
+
+    const sourceSpec = join(specRoot, ".claude", featurePrefix, specFileName);
+    const fallbackSpec = join(targetPath, ".claude", featurePrefix, specFileName);
 
     if (existsSync(sourceSpec)) {
       await copyFile(sourceSpec, targetSpec);
       console.log(`[Orchestrator] Copied feature spec to ${targetSpec}`);
-    } else {
-      console.warn(`[Orchestrator] Feature spec not found at ${sourceSpec}`);
+      specCopied = true;
+      break;
+    } else if (existsSync(fallbackSpec)) {
+      await copyFile(fallbackSpec, targetSpec);
+      console.log(`[Orchestrator] Copied feature spec from target project to ${targetSpec}`);
+      specCopied = true;
+      break;
     }
+  }
+
+  if (!specCopied) {
+    console.warn(`[Orchestrator] Feature spec not found for prefix ${featurePrefix}`);
   }
 
   if (!existsSync(targetSmoke)) {
@@ -138,14 +162,21 @@ export async function initializeTargetProject(
     if (existsSync(sourceSmoke)) {
       await copyFile(sourceSmoke, targetSmoke);
       console.log(`[Orchestrator] Copied smoke tests to ${targetSmoke}`);
+    } else if (existsSync(fallbackSmoke)) {
+      await copyFile(fallbackSmoke, targetSmoke);
+      console.log(`[Orchestrator] Copied smoke tests from target project to ${targetSmoke}`);
     }
   }
 
   if (cleanupSource && sourceRoot) {
     const sourceFeatureDir = join(specRoot, ".claude", featurePrefix);
+    const sourceClaudeDir = join(specRoot, ".claude");
     const filesToRemove = [
+      join(sourceFeatureDir, "feature-spec.json"),
       join(sourceFeatureDir, "feature-spec.v3.json"),
       join(sourceFeatureDir, "smoke-tests.json"),
+      join(sourceClaudeDir, "feature-understanding.json"),
+      join(sourceClaudeDir, "feature-map.json"),
     ];
 
     for (const filePath of filesToRemove) {
@@ -186,8 +217,12 @@ export interface ParsedFeatureSpec {
   featurePrefix: string;
 }
 
+// Spec file names in order of preference (new format first, then legacy)
+const SPEC_FILE_NAMES = ["feature-spec.json", "feature-spec.v3.json"];
+
 /**
  * Find the feature spec file in any .claude/{prefix}/ folder
+ * Looks for both new (feature-spec.json) and legacy (feature-spec.v3.json) formats
  */
 async function findFeatureSpecPath(
   rootPath?: string,
@@ -201,17 +236,22 @@ async function findFeatureSpecPath(
   if (!existsSync(claudeDir)) return null;
 
   if (featurePrefix) {
-    const specPath = join(claudeDir, featurePrefix, "feature-spec.v3.json");
-    return existsSync(specPath) ? specPath : null;
+    for (const specFileName of SPEC_FILE_NAMES) {
+      const specPath = join(claudeDir, featurePrefix, specFileName);
+      if (existsSync(specPath)) return specPath;
+    }
+    return null;
   }
 
   try {
     const entries = await readdir(claudeDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory() && entry.name !== "skills") {
-        const specPath = join(claudeDir, entry.name, "feature-spec.v3.json");
-        if (existsSync(specPath)) {
-          return specPath;
+        for (const specFileName of SPEC_FILE_NAMES) {
+          const specPath = join(claudeDir, entry.name, specFileName);
+          if (existsSync(specPath)) {
+            return specPath;
+          }
         }
       }
     }
@@ -245,10 +285,12 @@ export async function parseRequirementsFromSpec(
     const projectName = String(
       spec.featureName || spec.projectName || spec.name || "untitled-project"
     );
-    const featurePrefix = String(spec.featurePrefix || "untitled");
+    const resolvedFeaturePrefix = String(
+      spec.featurePrefix || featurePrefix || "untitled"
+    );
 
     if (!spec.requirements || !Array.isArray(spec.requirements)) {
-      return { requirements: [], epics: [], projectName, featurePrefix };
+      return { requirements: [], epics: [], projectName, featurePrefix: resolvedFeaturePrefix };
     }
 
     const requirements = spec.requirements.map(
@@ -305,7 +347,7 @@ export async function parseRequirementsFromSpec(
     validateUniqueIds(requirements, "requirement");
     validateUniqueIds(epics, "epic");
 
-    return { requirements, epics, projectName, featurePrefix };
+    return { requirements, epics, projectName, featurePrefix: resolvedFeaturePrefix };
   } catch (error) {
     console.error("Error parsing requirements:", error);
     return { requirements: [], epics: [], projectName: "untitled-project", featurePrefix: "untitled" };

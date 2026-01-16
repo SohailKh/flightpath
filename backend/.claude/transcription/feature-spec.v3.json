@@ -1,0 +1,408 @@
+{
+  "schemaVersion": 3,
+  "featureId": "feat-transcription",
+  "featureName": "Audio to MIDI Transcription",
+  "featurePrefix": "transcription",
+  "summary": "Convert isolated piano audio to MIDI using Spotify Basic Pitch. This feature receives audio files that have been processed through the piano isolation step and uses the Basic Pitch neural network model to transcribe audio into MIDI data with pitch bend detection.",
+  "createdAt": "2026-01-16T00:00:00.000Z",
+  "dependencies": {
+    "features": ["feat-isolation"],
+    "packages": [
+      {
+        "name": "basic-pitch",
+        "version": "latest",
+        "reason": "Spotify's audio-to-MIDI transcription library with pitch bend detection, lightweight neural network (~17K params)",
+        "installCommand": "pip install basic-pitch"
+      },
+      {
+        "name": "pretty_midi",
+        "version": "latest",
+        "reason": "MIDI file manipulation and saving, automatically installed as basic-pitch dependency",
+        "installCommand": "pip install pretty_midi"
+      },
+      {
+        "name": "flask",
+        "version": "latest",
+        "reason": "Lightweight HTTP server for Python worker to receive transcription requests from Node.js backend",
+        "installCommand": "pip install flask"
+      }
+    ],
+    "systemDependencies": [],
+    "envVars": []
+  },
+  "architecture": {
+    "overview": "The transcription feature uses a Python worker process that exposes a Flask HTTP API. The Node.js backend calls this worker with the path to isolated piano audio, and the worker uses Spotify Basic Pitch to transcribe it to MIDI. The resulting MIDI file is saved to disk and its path returned to the Node.js backend.",
+    "components": [
+      {
+        "name": "Transcription Worker",
+        "type": "python-service",
+        "path": "worker/",
+        "description": "Flask-based Python service that handles audio-to-MIDI transcription using Basic Pitch"
+      },
+      {
+        "name": "Transcription API Route",
+        "type": "api-route",
+        "path": "src/app/api/jobs/[id]/transcribe/route.ts",
+        "description": "Next.js API route that triggers transcription by calling the Python worker"
+      },
+      {
+        "name": "Transcription Service",
+        "type": "service",
+        "path": "src/lib/services/transcription.ts",
+        "description": "TypeScript service layer for communicating with the Python worker"
+      }
+    ],
+    "dataFlow": [
+      "1. Job in ISOLATING state completes → isolated_piano_path populated",
+      "2. Backend triggers transcription via POST to Python worker",
+      "3. Python worker loads audio, runs Basic Pitch inference",
+      "4. MIDI data written to disk at predictable path",
+      "5. Worker returns success with MIDI file path",
+      "6. Backend updates job: status=TRANSCRIBING→NOTATING, midi_path set"
+    ]
+  },
+  "database": {
+    "tables": [],
+    "migrations": [],
+    "notes": "Uses existing jobs table from feat-upload. Updates status and midi_path fields."
+  },
+  "api": {
+    "endpoints": [
+      {
+        "method": "POST",
+        "path": "/api/jobs/[id]/transcribe",
+        "description": "Trigger MIDI transcription for a job that has completed isolation",
+        "auth": "none",
+        "request": {
+          "params": {
+            "id": "string - Job UUID"
+          },
+          "body": null
+        },
+        "response": {
+          "success": {
+            "status": 200,
+            "body": {
+              "success": "boolean",
+              "midiPath": "string - Path to generated MIDI file",
+              "noteCount": "number - Number of notes detected",
+              "durationSeconds": "number - Total duration of MIDI"
+            }
+          },
+          "errors": [
+            {
+              "status": 400,
+              "code": "INVALID_STATE",
+              "message": "Job must be in ISOLATED state to transcribe"
+            },
+            {
+              "status": 404,
+              "code": "JOB_NOT_FOUND",
+              "message": "Job with specified ID not found"
+            },
+            {
+              "status": 404,
+              "code": "AUDIO_NOT_FOUND",
+              "message": "Isolated audio file not found on disk"
+            },
+            {
+              "status": 503,
+              "code": "WORKER_UNAVAILABLE",
+              "message": "Transcription worker is not running"
+            },
+            {
+              "status": 500,
+              "code": "TRANSCRIPTION_FAILED",
+              "message": "Basic Pitch transcription failed"
+            }
+          ]
+        }
+      }
+    ],
+    "workerEndpoints": [
+      {
+        "method": "POST",
+        "path": "/transcribe",
+        "host": "http://localhost:5001",
+        "description": "Python worker endpoint for audio-to-MIDI transcription",
+        "request": {
+          "body": {
+            "audioPath": "string - Absolute path to isolated piano audio file",
+            "outputPath": "string - Absolute path for output MIDI file",
+            "options": {
+              "minimumFrequency": "number | null - Minimum note frequency in Hz (optional)",
+              "maximumFrequency": "number | null - Maximum note frequency in Hz (optional)"
+            }
+          }
+        },
+        "response": {
+          "success": {
+            "body": {
+              "success": true,
+              "midiPath": "string - Path to generated MIDI file",
+              "noteCount": "number - Number of notes in MIDI",
+              "durationSeconds": "number - Duration in seconds",
+              "notes": [
+                {
+                  "pitch": "number - MIDI pitch (0-127)",
+                  "startTime": "number - Start time in seconds",
+                  "endTime": "number - End time in seconds",
+                  "velocity": "number - Note velocity (0-127)"
+                }
+              ]
+            }
+          },
+          "errors": [
+            {
+              "success": false,
+              "error": "AUDIO_NOT_FOUND",
+              "message": "Audio file not found at specified path"
+            },
+            {
+              "success": false,
+              "error": "INVALID_AUDIO",
+              "message": "Could not decode audio file"
+            },
+            {
+              "success": false,
+              "error": "TRANSCRIPTION_FAILED",
+              "message": "Basic Pitch inference failed"
+            },
+            {
+              "success": false,
+              "error": "NO_NOTES_DETECTED",
+              "message": "No notes detected in audio"
+            }
+          ]
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/health",
+        "host": "http://localhost:5001",
+        "description": "Health check endpoint for Python worker",
+        "response": {
+          "body": {
+            "status": "ok",
+            "modelLoaded": "boolean - Whether Basic Pitch model is loaded"
+          }
+        }
+      }
+    ]
+  },
+  "userStories": [
+    {
+      "id": "us-transcription-1",
+      "title": "Automatic transcription after isolation",
+      "description": "As a user, after piano isolation completes, I want the system to automatically transcribe the audio to MIDI so I don't have to manually trigger each step",
+      "acceptanceCriteria": [
+        "When isolation completes, transcription starts automatically",
+        "Job status changes from ISOLATED to TRANSCRIBING",
+        "Progress updates are shown during transcription",
+        "When transcription completes, job moves to NOTATING state"
+      ]
+    },
+    {
+      "id": "us-transcription-2",
+      "title": "View transcription results",
+      "description": "As a user, I want to see basic statistics about the transcription (note count, duration) so I know the transcription captured my audio",
+      "acceptanceCriteria": [
+        "After transcription, note count is displayed",
+        "Duration of the MIDI is shown",
+        "If no notes were detected, a warning message appears"
+      ]
+    },
+    {
+      "id": "us-transcription-3",
+      "title": "Handle transcription errors gracefully",
+      "description": "As a user, if transcription fails, I want to see a clear error message and be able to retry",
+      "acceptanceCriteria": [
+        "If worker is unavailable, show 'TRANSCRIPTION SERVICE UNAVAILABLE' error",
+        "If transcription fails, show specific error message",
+        "Retry button is available after failure",
+        "Job status is FAILED with error details saved"
+      ]
+    }
+  ],
+  "implementation": {
+    "files": [
+      {
+        "path": "worker/app.py",
+        "type": "create",
+        "description": "Flask application for Python transcription worker",
+        "notes": "Main entry point for the Python worker. Exposes /transcribe and /health endpoints. Loads Basic Pitch model once at startup for efficiency."
+      },
+      {
+        "path": "worker/transcriber.py",
+        "type": "create",
+        "description": "Core transcription logic using Basic Pitch",
+        "notes": "Wraps basic_pitch.inference.predict() with error handling. Returns MIDI data and note statistics."
+      },
+      {
+        "path": "worker/requirements.txt",
+        "type": "create",
+        "description": "Python dependencies for the worker",
+        "notes": "Include basic-pitch, flask, pretty_midi"
+      },
+      {
+        "path": "src/lib/services/transcription.ts",
+        "type": "create",
+        "description": "TypeScript service for calling Python worker",
+        "notes": "HTTP client for worker communication. Handles retries and error mapping."
+      },
+      {
+        "path": "src/app/api/jobs/[id]/transcribe/route.ts",
+        "type": "create",
+        "description": "API route to trigger transcription",
+        "notes": "Validates job state, calls transcription service, updates job in database."
+      },
+      {
+        "path": "src/lib/constants/job-status.ts",
+        "type": "modify",
+        "description": "Add TRANSCRIBING status to job statuses",
+        "notes": "Ensure status enum includes TRANSCRIBING between ISOLATED and NOTATING"
+      }
+    ],
+    "steps": [
+      {
+        "order": 1,
+        "description": "Create Python worker directory structure and requirements.txt",
+        "files": ["worker/requirements.txt"]
+      },
+      {
+        "order": 2,
+        "description": "Implement core transcription logic in transcriber.py",
+        "files": ["worker/transcriber.py"],
+        "details": "Use basic_pitch.inference.predict() with Model class for efficient repeated use. Return MIDI data and note event list."
+      },
+      {
+        "order": 3,
+        "description": "Create Flask app with /transcribe and /health endpoints",
+        "files": ["worker/app.py"],
+        "details": "Load model at startup. Parse JSON request body. Save MIDI to specified output path. Return note statistics."
+      },
+      {
+        "order": 4,
+        "description": "Create TypeScript transcription service",
+        "files": ["src/lib/services/transcription.ts"],
+        "details": "HTTP client using fetch. Health check before transcription. Timeout handling (60 seconds default)."
+      },
+      {
+        "order": 5,
+        "description": "Create API route for transcription trigger",
+        "files": ["src/app/api/jobs/[id]/transcribe/route.ts"],
+        "details": "Validate job exists and is in ISOLATED state. Call transcription service. Update job status and midi_path."
+      },
+      {
+        "order": 6,
+        "description": "Update job status constants to include TRANSCRIBING",
+        "files": ["src/lib/constants/job-status.ts"]
+      },
+      {
+        "order": 7,
+        "description": "Integrate transcription into pipeline flow",
+        "details": "After isolation completes, automatically trigger transcription. Update progress UI to show step 03."
+      }
+    ]
+  },
+  "testing": {
+    "unit": [
+      {
+        "file": "worker/test_transcriber.py",
+        "description": "Unit tests for transcriber module",
+        "cases": [
+          "Successfully transcribe valid audio file",
+          "Handle missing audio file",
+          "Handle corrupted audio file",
+          "Handle empty/silent audio (no notes)",
+          "Verify note count and duration in response"
+        ]
+      },
+      {
+        "file": "src/lib/services/__tests__/transcription.test.ts",
+        "description": "Unit tests for transcription service",
+        "cases": [
+          "Successfully call worker and parse response",
+          "Handle worker unavailable (connection refused)",
+          "Handle worker timeout",
+          "Handle worker error responses",
+          "Retry logic on transient failures"
+        ]
+      }
+    ],
+    "integration": [
+      {
+        "description": "End-to-end transcription flow",
+        "cases": [
+          "Upload audio → isolate → transcribe → verify MIDI file exists",
+          "Transcription with various audio formats (mp3, wav, flac)",
+          "Transcription with different audio durations"
+        ]
+      }
+    ],
+    "fixtures": [
+      {
+        "name": "isolated_piano_short.wav",
+        "description": "10-second isolated piano audio for testing transcription",
+        "location": "test/fixtures/audio/"
+      },
+      {
+        "name": "silent_audio.wav",
+        "description": "Silent audio file for testing no-notes-detected case",
+        "location": "test/fixtures/audio/"
+      }
+    ]
+  },
+  "edgeCases": [
+    {
+      "case": "Empty or silent audio",
+      "handling": "Basic Pitch will produce empty or near-empty MIDI. Worker returns success with noteCount=0. Frontend shows warning: 'NO NOTES DETECTED. CHECK ISOLATED AUDIO.'",
+      "severity": "warning"
+    },
+    {
+      "case": "Very long audio file",
+      "handling": "Transcription may be slow but Basic Pitch handles it. No hard limit. Progress updates shown. Consider timeout of 5 minutes for very long files.",
+      "severity": "info"
+    },
+    {
+      "case": "Python worker not running",
+      "handling": "Health check fails before transcription attempt. Return 503 WORKER_UNAVAILABLE. User sees 'TRANSCRIPTION SERVICE UNAVAILABLE. TRY AGAIN.'",
+      "severity": "error"
+    },
+    {
+      "case": "Worker out of memory",
+      "handling": "Worker process may crash. Node.js backend detects connection reset. Return 500 TRANSCRIPTION_FAILED. User sees 'TRANSCRIPTION FAILED. TRY A SHORTER FILE.'",
+      "severity": "error"
+    },
+    {
+      "case": "Invalid audio format",
+      "handling": "Basic Pitch supports mp3, wav, flac, ogg, m4a. Unsupported formats fail at decode. Return INVALID_AUDIO error.",
+      "severity": "error"
+    },
+    {
+      "case": "Concurrent transcription requests",
+      "handling": "Python worker handles one request at a time (Flask development server). Queue additional requests. Consider Gunicorn for production with multiple workers.",
+      "severity": "info"
+    }
+  ],
+  "technicalNotes": {
+    "basicPitchDetails": {
+      "model": "ICASSP_2022_MODEL_PATH (default model)",
+      "audioResampling": "All audio resampled to 22050 Hz, stereo downmixed to mono",
+      "outputFormat": "pretty_midi.PrettyMIDI object with pitch bend detection",
+      "pythonVersions": "Python 3.7-3.11 supported, Python 3.10 for Mac M1",
+      "modelRuntimes": "Auto-selects: TensorFlow → CoreML → TensorFlowLite → ONNX",
+      "performance": "Faster than real-time on modern hardware, ~17K parameters"
+    },
+    "workerConfiguration": {
+      "port": 5001,
+      "host": "localhost",
+      "timeout": 300,
+      "maxContentLength": "50MB for audio file path + options"
+    },
+    "fileNaming": {
+      "midiOutput": "{jobId}_transcribed.mid",
+      "storagePath": "storage/jobs/{jobId}/"
+    }
+  }
+}

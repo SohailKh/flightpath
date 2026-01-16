@@ -22,6 +22,7 @@ import type { BrowserOptions } from "./playwright-types";
  */
 export type AgentName =
   | "feature-qa"
+  | "feature-spec"
   | "feature-planner"
   | "feature-executor"
   | "feature-tester"
@@ -31,7 +32,8 @@ export type AgentName =
   | "explorer-pattern"
   | "explorer-api"
   | "explorer-test"
-  | "research-web";
+  | "research-web"
+  | "design-system";
 
 /**
  * Message format for conversation history
@@ -328,7 +330,7 @@ This is a NEW PROJECT - there is no existing codebase to analyze.
 Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to interviewing the user about what they want to build.
 
 **Working Directory:** \`${cwd}\`
-When writing files (like feature-spec.v3.json), use this as the base path.
+For pipeline artifacts (feature-spec.v3.json, smoke-tests.json, feature-map.json), always write under \`.claude/{featurePrefix}\` (the \`.claude\` path is remapped to backend storage). Do not write those files into the target project root.
 
 ` + agentPrompt;
   }

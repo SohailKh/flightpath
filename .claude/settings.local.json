@@ -31,7 +31,8 @@
       "Bash(npm run dev:bun:*)",
       "Bash(tsc:*)",
       "Bash(npx bun --version)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(jq:*)"
     ]
   }
 }

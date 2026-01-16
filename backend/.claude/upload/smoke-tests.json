@@ -1,0 +1,504 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat-upload",
+  "featureName": "Audio Upload",
+  "generatedAt": "2026-01-16T00:00:00.000Z",
+  "testEnvironment": {
+    "fixtures": [
+      {
+        "name": "valid-mp3",
+        "description": "Valid MP3 audio file for testing uploads",
+        "type": "file",
+        "requirements": "MP3 file, 10-30 seconds, < 5MB, contains clear audio"
+      },
+      {
+        "name": "valid-wav",
+        "description": "Valid WAV audio file for testing uploads",
+        "type": "file",
+        "requirements": "WAV file, 10-30 seconds, < 50MB, contains clear audio"
+      },
+      {
+        "name": "valid-flac",
+        "description": "Valid FLAC audio file for testing uploads",
+        "type": "file",
+        "requirements": "FLAC file, 10-30 seconds, < 50MB, contains clear audio"
+      },
+      {
+        "name": "valid-ogg",
+        "description": "Valid OGG audio file for testing uploads",
+        "type": "file",
+        "requirements": "OGG file, 10-30 seconds, < 5MB, contains clear audio"
+      },
+      {
+        "name": "invalid-format",
+        "description": "Non-audio file for testing format rejection",
+        "type": "file",
+        "requirements": "Any non-audio file (e.g., .pdf, .txt, .jpg)"
+      },
+      {
+        "name": "empty-file",
+        "description": "Empty file for testing empty file rejection",
+        "type": "file",
+        "requirements": "0 byte file with .mp3 extension"
+      }
+    ],
+    "setup": [
+      "Ensure application is running at http://localhost:3000",
+      "Ensure uploads directory exists and is writable",
+      "Ensure SQLite database is initialized",
+      "Clear any existing test jobs from database"
+    ]
+  },
+  "smokeTests": [
+    {
+      "id": "smoke-upload-mp3-drag",
+      "name": "Upload MP3 via drag and drop",
+      "description": "Verify that users can upload an MP3 file by dragging it onto the upload zone",
+      "priority": "critical",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Upload zone is visible with text 'DROP AUDIO FILE OR CLICK TO UPLOAD'"
+        },
+        {
+          "step": 2,
+          "action": "Drag valid-mp3 fixture file over upload zone",
+          "expected": "Upload zone border changes from dashed to solid, background becomes gray (#F2F2F2)"
+        },
+        {
+          "step": 3,
+          "action": "Drop the file onto upload zone",
+          "expected": "Progress bar appears showing upload progress"
+        },
+        {
+          "step": 4,
+          "action": "Wait for upload to complete",
+          "expected": "FileInfoCard appears showing: file name, format badge 'MP3', file size, 'START PROCESSING' button"
+        }
+      ],
+      "assertions": [
+        "File is stored in uploads/{jobId}/ directory",
+        "Job record exists in database with status 'UPLOADED'",
+        "Job record has correct input_file_name, input_file_size, input_file_format"
+      ]
+    },
+    {
+      "id": "smoke-upload-click",
+      "name": "Upload via file picker click",
+      "description": "Verify that users can upload a file by clicking the upload zone",
+      "priority": "critical",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Upload zone is visible"
+        },
+        {
+          "step": 2,
+          "action": "Click on upload zone",
+          "expected": "Native file picker dialog opens"
+        },
+        {
+          "step": 3,
+          "action": "Select valid-wav fixture file",
+          "expected": "File picker closes, upload progress bar appears"
+        },
+        {
+          "step": 4,
+          "action": "Wait for upload to complete",
+          "expected": "FileInfoCard appears showing file details with format badge 'WAV'"
+        }
+      ],
+      "assertions": [
+        "File is stored in uploads directory",
+        "Job record exists in database with status 'UPLOADED'"
+      ]
+    },
+    {
+      "id": "smoke-upload-flac",
+      "name": "Upload FLAC file",
+      "description": "Verify FLAC format is accepted",
+      "priority": "high",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Upload zone is visible"
+        },
+        {
+          "step": 2,
+          "action": "Upload valid-flac fixture file (drag or click)",
+          "expected": "Upload completes successfully"
+        },
+        {
+          "step": 3,
+          "action": "Verify file info card",
+          "expected": "Format badge shows 'FLAC'"
+        }
+      ],
+      "assertions": [
+        "Job record has input_file_format = 'flac'"
+      ]
+    },
+    {
+      "id": "smoke-upload-ogg",
+      "name": "Upload OGG file",
+      "description": "Verify OGG format is accepted",
+      "priority": "high",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Upload zone is visible"
+        },
+        {
+          "step": 2,
+          "action": "Upload valid-ogg fixture file (drag or click)",
+          "expected": "Upload completes successfully"
+        },
+        {
+          "step": 3,
+          "action": "Verify file info card",
+          "expected": "Format badge shows 'OGG'"
+        }
+      ],
+      "assertions": [
+        "Job record has input_file_format = 'ogg'"
+      ]
+    },
+    {
+      "id": "smoke-reject-invalid-format",
+      "name": "Reject invalid file format",
+      "description": "Verify that non-audio files are rejected with appropriate error",
+      "priority": "critical",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Upload zone is visible"
+        },
+        {
+          "step": 2,
+          "action": "Attempt to upload invalid-format fixture file (e.g., .pdf)",
+          "expected": "Upload zone shows error state"
+        },
+        {
+          "step": 3,
+          "action": "Read error message",
+          "expected": "Error message reads 'UNSUPPORTED FORMAT. USE MP3, WAV, FLAC, OR OGG.'"
+        },
+        {
+          "step": 4,
+          "action": "Wait 3 seconds or click upload zone",
+          "expected": "Upload zone resets to idle state"
+        }
+      ],
+      "assertions": [
+        "No file is stored in uploads directory",
+        "No job record is created in database"
+      ]
+    },
+    {
+      "id": "smoke-reject-empty-file",
+      "name": "Reject empty file",
+      "description": "Verify that empty files are rejected",
+      "priority": "high",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Upload zone is visible"
+        },
+        {
+          "step": 2,
+          "action": "Attempt to upload empty-file fixture",
+          "expected": "Upload zone shows error state"
+        },
+        {
+          "step": 3,
+          "action": "Read error message",
+          "expected": "Error message reads 'FILE IS EMPTY.'"
+        }
+      ],
+      "assertions": [
+        "No file is stored in uploads directory",
+        "No job record is created in database"
+      ]
+    },
+    {
+      "id": "smoke-start-processing",
+      "name": "Start processing after upload",
+      "description": "Verify that clicking START PROCESSING navigates to job page",
+      "priority": "critical",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Upload a valid audio file",
+          "expected": "FileInfoCard appears with START PROCESSING button"
+        },
+        {
+          "step": 2,
+          "action": "Click 'START PROCESSING' button",
+          "expected": "Browser navigates to /job/{jobId}"
+        },
+        {
+          "step": 3,
+          "action": "Verify job page loads",
+          "expected": "Job status page shows file name and status header"
+        }
+      ],
+      "assertions": [
+        "URL matches /job/{uuid} pattern",
+        "Job status is visible on page"
+      ]
+    },
+    {
+      "id": "smoke-cancel-upload",
+      "name": "Cancel after upload",
+      "description": "Verify that user can cancel and reset after uploading",
+      "priority": "medium",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Upload a valid audio file",
+          "expected": "FileInfoCard appears"
+        },
+        {
+          "step": 2,
+          "action": "Click 'CANCEL' link",
+          "expected": "FileInfoCard disappears, upload zone returns to idle state"
+        },
+        {
+          "step": 3,
+          "action": "Verify upload zone is interactive",
+          "expected": "Can drag or click to upload another file"
+        }
+      ],
+      "assertions": [
+        "Upload zone shows idle state text"
+      ]
+    },
+    {
+      "id": "smoke-upload-progress",
+      "name": "Upload progress feedback",
+      "description": "Verify that progress bar shows during upload",
+      "priority": "high",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Upload zone is visible"
+        },
+        {
+          "step": 2,
+          "action": "Start uploading a larger valid file (e.g., WAV file ~50MB)",
+          "expected": "Progress bar appears immediately"
+        },
+        {
+          "step": 3,
+          "action": "Observe progress bar during upload",
+          "expected": "Progress bar fills from left to right, percentage updates"
+        },
+        {
+          "step": 4,
+          "action": "Wait for completion",
+          "expected": "Progress reaches 100%, then FileInfoCard appears"
+        }
+      ],
+      "assertions": [
+        "Progress bar visible during upload",
+        "Progress percentage displayed"
+      ]
+    },
+    {
+      "id": "smoke-drag-over-feedback",
+      "name": "Drag over visual feedback",
+      "description": "Verify visual feedback when dragging file over upload zone",
+      "priority": "medium",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Upload zone has dashed black border"
+        },
+        {
+          "step": 2,
+          "action": "Drag a file over the upload zone (do not drop)",
+          "expected": "Border becomes solid, background becomes gray (#F2F2F2)"
+        },
+        {
+          "step": 3,
+          "action": "Drag file away from upload zone",
+          "expected": "Border returns to dashed, background returns to white"
+        }
+      ],
+      "assertions": [
+        "Visual state changes on dragenter",
+        "Visual state resets on dragleave"
+      ]
+    },
+    {
+      "id": "smoke-api-upload-endpoint",
+      "name": "API: POST /api/upload",
+      "description": "Verify upload API endpoint works correctly",
+      "priority": "critical",
+      "type": "api",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Send POST request to /api/upload with valid MP3 file as multipart form data",
+          "expected": "Response status 201"
+        },
+        {
+          "step": 2,
+          "action": "Parse response body",
+          "expected": "Response contains jobId (UUID), status='UPLOADED', fileName, fileSize, format='mp3'"
+        }
+      ],
+      "assertions": [
+        "Response status is 201",
+        "Response body contains jobId as valid UUID",
+        "Response body contains status='UPLOADED'",
+        "Response body contains correct fileName",
+        "Response body contains correct fileSize as number",
+        "Response body contains format='mp3'"
+      ]
+    },
+    {
+      "id": "smoke-api-upload-invalid",
+      "name": "API: POST /api/upload with invalid format",
+      "description": "Verify upload API rejects invalid file formats",
+      "priority": "high",
+      "type": "api",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Send POST request to /api/upload with PDF file",
+          "expected": "Response status 400"
+        },
+        {
+          "step": 2,
+          "action": "Parse response body",
+          "expected": "Response contains error message and code='INVALID_FORMAT'"
+        }
+      ],
+      "assertions": [
+        "Response status is 400",
+        "Response body contains code='INVALID_FORMAT'",
+        "Response body contains error message"
+      ]
+    },
+    {
+      "id": "smoke-api-get-job",
+      "name": "API: GET /api/jobs/[jobId]",
+      "description": "Verify job status API endpoint returns job details",
+      "priority": "critical",
+      "type": "api",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a job via POST /api/upload",
+          "expected": "Job created, jobId returned"
+        },
+        {
+          "step": 2,
+          "action": "Send GET request to /api/jobs/{jobId}",
+          "expected": "Response status 200"
+        },
+        {
+          "step": 3,
+          "action": "Parse response body",
+          "expected": "Response contains job details: id, status, progress, fileName, etc."
+        }
+      ],
+      "assertions": [
+        "Response status is 200",
+        "Response body contains id matching jobId",
+        "Response body contains status='UPLOADED'",
+        "Response body contains progress=0",
+        "Response body contains fileName",
+        "Response body contains createdAt as ISO timestamp"
+      ]
+    },
+    {
+      "id": "smoke-api-job-not-found",
+      "name": "API: GET /api/jobs/[jobId] not found",
+      "description": "Verify job status API returns 404 for non-existent job",
+      "priority": "high",
+      "type": "api",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Send GET request to /api/jobs/00000000-0000-0000-0000-000000000000",
+          "expected": "Response status 404"
+        },
+        {
+          "step": 2,
+          "action": "Parse response body",
+          "expected": "Response contains error and code='JOB_NOT_FOUND'"
+        }
+      ],
+      "assertions": [
+        "Response status is 404",
+        "Response body contains code='JOB_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "smoke-ui-swiss-design",
+      "name": "UI follows Swiss design system",
+      "description": "Verify upload UI adheres to Swiss design guidelines",
+      "priority": "medium",
+      "type": "visual",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to home page",
+          "expected": "Page renders correctly"
+        },
+        {
+          "step": 2,
+          "action": "Inspect upload zone styling",
+          "expected": "4px dashed black border, no rounded corners, no shadows"
+        },
+        {
+          "step": 3,
+          "action": "Inspect text styling",
+          "expected": "Uppercase labels, Inter font family"
+        },
+        {
+          "step": 4,
+          "action": "Inspect button styling after upload",
+          "expected": "START PROCESSING button has Swiss Red (#FF3000) background, white text, no rounded corners"
+        }
+      ],
+      "assertions": [
+        "Upload zone has border-width: 4px",
+        "Upload zone has border-radius: 0",
+        "Text labels are uppercase",
+        "No box-shadow on components",
+        "Primary button background is #FF3000"
+      ]
+    }
+  ],
+  "coverageSummary": {
+    "userFlows": [
+      { "flow": "Drag and drop upload", "covered": true, "testIds": ["smoke-upload-mp3-drag"] },
+      { "flow": "Click to upload", "covered": true, "testIds": ["smoke-upload-click"] },
+      { "flow": "Invalid format rejection", "covered": true, "testIds": ["smoke-reject-invalid-format"] },
+      { "flow": "Empty file rejection", "covered": true, "testIds": ["smoke-reject-empty-file"] },
+      { "flow": "Start processing", "covered": true, "testIds": ["smoke-start-processing"] },
+      { "flow": "Cancel upload", "covered": true, "testIds": ["smoke-cancel-upload"] }
+    ],
+    "apiEndpoints": [
+      { "endpoint": "POST /api/upload", "covered": true, "testIds": ["smoke-api-upload-endpoint", "smoke-api-upload-invalid"] },
+      { "endpoint": "GET /api/jobs/[jobId]", "covered": true, "testIds": ["smoke-api-get-job", "smoke-api-job-not-found"] }
+    ],
+    "fileFormats": [
+      { "format": "MP3", "covered": true, "testIds": ["smoke-upload-mp3-drag"] },
+      { "format": "WAV", "covered": true, "testIds": ["smoke-upload-click"] },
+      { "format": "FLAC", "covered": true, "testIds": ["smoke-upload-flac"] },
+      { "format": "OGG", "covered": true, "testIds": ["smoke-upload-ogg"] }
+    ]
+  }
+}

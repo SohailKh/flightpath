@@ -274,6 +274,46 @@ function shouldRewritePath(value: string): boolean {
   return true;
 }
 
+const CLAUDE_ARTIFACT_FILES = new Set([
+  "feature-spec.json",
+  "feature-spec.v3.json",
+  "feature-understanding.json",
+  "smoke-tests.json",
+  "feature-map.json",
+]);
+
+function extractFeaturePrefixFromContent(content: unknown): string | null {
+  if (typeof content !== "string") return null;
+  const match = content.match(/"featurePrefix"\s*:\s*"([^"]+)"/);
+  const prefix = match?.[1]?.trim();
+  return prefix ? prefix : null;
+}
+
+function normalizeArtifactPath(rawPath: string, content?: unknown): string {
+  const normalized = rawPath.replace(/\\/g, "/");
+  if (normalized.includes("/.claude/") || normalized.startsWith(".claude/")) {
+    return rawPath;
+  }
+
+  const base = normalized.split("/").pop() || normalized;
+  if (!CLAUDE_ARTIFACT_FILES.has(base)) return rawPath;
+
+  let prefix: string | null = null;
+  const dir = normalized.slice(0, normalized.length - base.length).replace(/\/$/, "");
+  if (dir && dir !== "." && dir !== "..") {
+    const parts = dir.split("/");
+    prefix = parts[parts.length - 1];
+  }
+
+  if (!prefix) {
+    prefix = extractFeaturePrefixFromContent(content);
+  }
+
+  if (!prefix) return rawPath;
+
+  return `.claude/${prefix}/${base}`;
+}
+
 function rewriteBashCommand(command: string, cwd?: string): string {
   const trimmed = command.trim();
   if (!trimmed) return command;
@@ -297,11 +337,13 @@ function resolveToolInput(
   let updated = false;
   const next: Record<string, unknown> = { ...input };
 
-  const updatePathKey = (key: string) => {
+  const updatePathKey = (key: string, content?: unknown) => {
     const raw = input[key];
     if (typeof raw !== "string" || !shouldRewritePath(raw)) return;
+    const normalizedPath =
+      key === "file_path" ? normalizeArtifactPath(raw, content) : raw;
     const claudeRewritten = rewriteClaudeFilePath(
-      raw,
+      normalizedPath,
       claudeStorageId,
       claudeStorageRootOverride
     );
@@ -315,8 +357,10 @@ function resolveToolInput(
   switch (toolName) {
     case "Read":
     case "Edit":
-    case "Write":
       updatePathKey("file_path");
+      break;
+    case "Write":
+      updatePathKey("file_path", input.content);
       break;
     case "Glob":
       updatePathKey("pattern");
@@ -573,7 +617,7 @@ This is a NEW PROJECT - there is no existing codebase to analyze.
 Skip all file operations (git, Read, Glob, Grep, Bash) and proceed directly to interviewing the user about what they want to build.
 
 **Working Directory:** \`${cwd}\`
-When writing files (like feature-spec.v3.json), use this as the base path.
+For pipeline artifacts (feature-spec.v3.json, smoke-tests.json, feature-map.json), always write under \`.claude/{featurePrefix}\` (the \`.claude\` path is remapped to backend storage). Do not write those files into the target project root.
 
 ` + systemPrompt;
   }
