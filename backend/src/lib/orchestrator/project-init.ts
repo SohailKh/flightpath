@@ -22,6 +22,53 @@ function generateFallbackId(prefix: string, index: number): string {
 }
 
 /**
+ * Convert priority value to a number.
+ * Handles both numeric values and MoSCoW string values.
+ * Returns 0 if the value cannot be converted.
+ */
+function parsePriority(value: unknown): number {
+  // Already a number
+  if (typeof value === "number" && !isNaN(value)) {
+    return value;
+  }
+
+  // String number (e.g., "1", "2")
+  if (typeof value === "string") {
+    const numericValue = Number(value);
+    if (!isNaN(numericValue)) {
+      return numericValue;
+    }
+
+    // MoSCoW priority strings
+    const normalized = value.toLowerCase().trim();
+    const moscowMap: Record<string, number> = {
+      must: 1,
+      "must have": 1,
+      "must-have": 1,
+      should: 2,
+      "should have": 2,
+      "should-have": 2,
+      could: 3,
+      "could have": 3,
+      "could-have": 3,
+      wont: 4,
+      "won't": 4,
+      "wont have": 4,
+      "won't have": 4,
+      "wont-have": 4,
+      "won't-have": 4,
+      low: 5,
+    };
+
+    if (normalized in moscowMap) {
+      return moscowMap[normalized];
+    }
+  }
+
+  return 0;
+}
+
+/**
  * Validate that all IDs in a collection are unique
  * Logs a warning if duplicates are found
  */
@@ -294,16 +341,40 @@ export async function parseRequirementsFromSpec(
     }
 
     const requirements = spec.requirements.map(
-      (req: Record<string, unknown>, index: number): Requirement => ({
-        id: String(req.id || "") || generateFallbackId("req", index),
-        title: String(req.title || ""),
-        description: String(req.description || ""),
-        priority: Number(req.priority || 0),
-        status: "pending",
-        acceptanceCriteria: Array.isArray(req.acceptanceCriteria)
-          ? req.acceptanceCriteria.map(String)
-          : [],
-      })
+      (req: Record<string, unknown>, index: number): Requirement => {
+        const base: Requirement = {
+          id: String(req.id || "") || generateFallbackId("req", index),
+          title: String(req.title || ""),
+          description: String(req.description || ""),
+          priority: parsePriority(req.priority),
+          status: "pending",
+          acceptanceCriteria: Array.isArray(req.acceptanceCriteria)
+            ? req.acceptanceCriteria.map(String)
+            : [],
+        };
+
+        // Preserve optional fields if present in spec
+        if (req.epicId) {
+          base.epicId = String(req.epicId);
+        }
+        if (req.area) {
+          base.area = String(req.area);
+        }
+        if (req.platform && ["frontend", "backend", "both"].includes(String(req.platform))) {
+          base.platform = String(req.platform) as "frontend" | "backend" | "both";
+        }
+        if (Array.isArray(req.dependencies)) {
+          base.dependencies = req.dependencies.map(String);
+        }
+        if (Array.isArray(req.files)) {
+          base.files = req.files.map(String);
+        }
+        if (Array.isArray(req.smokeTestRefs)) {
+          base.smokeTestRefs = req.smokeTestRefs.map(String);
+        }
+
+        return base;
+      }
     );
 
     // Parse epics and link requirements to them
@@ -323,7 +394,7 @@ export async function parseRequirementsFromSpec(
           id: epicId,
           title: String(epic.title || ""),
           goal: String(epic.goal || ""),
-          priority: Number(epic.priority || 0),
+          priority: parsePriority(epic.priority),
           definitionOfDone: String(epic.definitionOfDone || ""),
           keyScreens: Array.isArray(epic.keyScreens)
             ? epic.keyScreens.map(String)

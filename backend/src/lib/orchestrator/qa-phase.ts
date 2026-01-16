@@ -262,9 +262,10 @@ function selectCurrentFeature(
 function buildFeatureKickoffPrompt(
   featureMap: FeatureMap,
   feature: FeatureMapFeature,
-  userMessage?: string
+  userMessage?: string,
+  claudeStorageId?: string
 ): string {
-  const featureMapPath = getFeatureMapPath(QA_OUTPUT_ROOT);
+  const featureMapPath = getFeatureMapPath(QA_OUTPUT_ROOT, claudeStorageId);
   const lines = [
     "You are continuing a multi-feature decomposition using the feature map below.",
     `Feature map: \`${featureMapPath}\``,
@@ -308,9 +309,9 @@ async function runQALoop(
   let remainingAuto = MAX_AUTO_FEATURES;
 
   while (true) {
-    const featureMap = await loadFeatureMap(QA_OUTPUT_ROOT);
+    const featureMap = await loadFeatureMap(QA_OUTPUT_ROOT, pipeline.claudeStorageId);
     const pendingFeatures = featureMap
-      ? getPendingFeatures(featureMap, QA_OUTPUT_ROOT)
+      ? getPendingFeatures(featureMap, QA_OUTPUT_ROOT, pipeline.claudeStorageId)
       : [];
 
     const stage = !featureMap
@@ -372,7 +373,7 @@ async function runQALoop(
 
     const outgoingMessage =
       stage === "feature" && needsNewSession && featureMap && currentFeature
-        ? buildFeatureKickoffPrompt(featureMap, currentFeature, nextMessage)
+        ? buildFeatureKickoffPrompt(featureMap, currentFeature, nextMessage, pipeline.claudeStorageId)
         : nextMessage;
 
     logPhase("qa", "Sending QA message", outgoingMessage.slice(0, 120));
@@ -405,16 +406,16 @@ async function runQALoop(
       return;
     }
 
-    const updatedFeatureMap = await loadFeatureMap(QA_OUTPUT_ROOT);
+    const updatedFeatureMap = await loadFeatureMap(QA_OUTPUT_ROOT, pipeline.claudeStorageId);
     if (!updatedFeatureMap) {
-      if (isQAComplete(result, QA_OUTPUT_ROOT)) {
+      if (isQAComplete(result, QA_OUTPUT_ROOT, pipeline.claudeStorageId)) {
         await resetQASession(pipelineId);
         await onQAComplete(pipelineId, undefined);
       }
       return;
     }
 
-    const pendingAfter = getPendingFeatures(updatedFeatureMap, QA_OUTPUT_ROOT);
+    const pendingAfter = getPendingFeatures(updatedFeatureMap, QA_OUTPUT_ROOT, pipeline.claudeStorageId);
     if (pendingAfter.length === 0) {
       updateQAState(pipelineId, { stage: undefined, featureId: undefined, featurePrefix: undefined });
       await resetQASession(pipelineId);
@@ -425,7 +426,7 @@ async function runQALoop(
     const featureCompleted =
       stage === "feature" &&
       currentFeature &&
-      existsSync(getFeatureSpecPath(currentFeature.prefix, QA_OUTPUT_ROOT));
+      existsSync(getFeatureSpecPath(currentFeature.prefix, QA_OUTPUT_ROOT, pipeline.claudeStorageId));
     const mapCompleted = stage === "map" && updatedFeatureMap;
     if (featureCompleted || mapCompleted) {
       await resetQASession(pipelineId);
@@ -596,7 +597,13 @@ async function cleanupSession(pipelineId: string): Promise<void> {
 /**
  * Get path to feature understanding file
  */
-function getFeatureUnderstandingPath(rootPath?: string): string {
+function getFeatureUnderstandingPath(
+  rootPath?: string,
+  claudeStorageId?: string
+): string {
+  if (claudeStorageId) {
+    return join(CLAUDE_STORAGE_ROOT, claudeStorageId, "feature-understanding.json");
+  }
   const root = rootPath ? resolve(rootPath) : FLIGHTPATH_ROOT;
   return join(root, ".claude", "feature-understanding.json");
 }
@@ -605,7 +612,11 @@ function getFeatureUnderstandingPath(rootPath?: string): string {
  * Check if QA phase is complete
  * QA is complete when feature-understanding.json has been written.
  */
-function isQAComplete(result: V2SessionTurnResult, rootPath?: string): boolean {
+function isQAComplete(
+  result: V2SessionTurnResult,
+  rootPath?: string,
+  claudeStorageId?: string
+): boolean {
   // Primary: Check if agent wrote to the understanding file via tool calls
   const wroteUnderstandingFile = result.toolCalls?.some(
     (call) =>
@@ -619,7 +630,7 @@ function isQAComplete(result: V2SessionTurnResult, rootPath?: string): boolean {
   }
 
   // Fallback: Check actual file existence
-  const understandingPath = getFeatureUnderstandingPath(rootPath);
+  const understandingPath = getFeatureUnderstandingPath(rootPath, claudeStorageId);
   if (existsSync(understandingPath)) {
     console.log(`${LOG.qa} Checking completion... result=true (understanding file exists at ${understandingPath})`);
     return true;
@@ -640,7 +651,7 @@ async function runSpecGeneration(
   const pipeline = getPipeline(pipelineId);
   if (!pipeline) return;
 
-  const understandingPath = getFeatureUnderstandingPath(QA_OUTPUT_ROOT);
+  const understandingPath = getFeatureUnderstandingPath(QA_OUTPUT_ROOT, pipeline.claudeStorageId);
   if (!existsSync(understandingPath)) {
     throw new Error("Feature understanding file not found");
   }

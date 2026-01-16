@@ -47,9 +47,21 @@ Order epics by dependency — foundational epics first (setup, core data models)
   "title": "User Onboarding",
   "goal": "New users can sign up and reach the main screen",
   "priority": 1,
-  "definitionOfDone": "User can create account, verify email, and see dashboard"
+  "definitionOfDone": "User can create account, verify email, and see dashboard",
+  "keyScreens": ["/signup", "/verify-email", "/dashboard"],
+  "smokeTestIds": ["smoke-onboarding-001", "smoke-onboarding-002"]
 }
 ```
+
+**Epic field definitions:**
+
+- `id`: Unique identifier (e.g., "epic-auth", "epic-onboarding")
+- `title`: Human-readable name for the epic
+- `goal`: What this epic delivers to the user
+- `priority`: Numeric priority 1-5 (1=highest, 5=lowest)
+- `definitionOfDone`: Clear criteria for when the epic is complete
+- `keyScreens`: Array of key UI screens/routes this epic produces (for web/mobile)
+- `smokeTestIds`: Array of smoke test IDs that verify this epic works
 
 ### Step 3: Define Areas
 
@@ -78,6 +90,7 @@ Break each epic into atomic requirements. Each requirement must be:
   "id": "auth-001",
   "epicId": "epic-auth",
   "area": "setup",
+  "platform": "backend",
   "priority": 1,
   "dependencies": [],
   "title": "Install authentication dependencies",
@@ -88,9 +101,21 @@ Break each epic into atomic requirements. Each requirement must be:
     "Environment variables documented in .env.example"
   ],
   "files": ["package.json", "src/lib/supabase.ts", ".env.example"],
+  "smokeTestRefs": ["smoke-auth-001"],
   "notes": []
 }
 ```
+
+**Field definitions:**
+
+- `id`: Unique identifier (e.g., "auth-001", "ui-003")
+- `epicId`: ID of the parent epic this requirement belongs to
+- `area`: Architectural layer (e.g., "setup", "ui.pages", "api", "auth")
+- `platform`: Target platform - "frontend", "backend", or "both"
+- `priority`: Numeric priority 1-5 (1=must have, 2=should have, 3=could have, 4=won't have this time, 5=low priority)
+- `dependencies`: Array of requirement IDs this depends on (empty if none)
+- `files`: Expected files to be created or modified
+- `smokeTestRefs`: Array of smoke test IDs that verify this requirement
 
 **Ordering requirements:**
 

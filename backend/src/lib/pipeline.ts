@@ -109,6 +109,13 @@ export interface Requirement {
   priority: number;
   status: "pending" | "in_progress" | "completed" | "failed";
   acceptanceCriteria: string[];
+  // Optional fields from feature spec
+  epicId?: string;
+  area?: string;
+  platform?: "frontend" | "backend" | "both";
+  dependencies?: string[];
+  files?: string[];
+  smokeTestRefs?: string[];
 }
 
 export interface EpicProgress {

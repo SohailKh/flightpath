@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { sanitizeProjectName, FLIGHTPATH_ROOT } from "./project-init";
+import { CLAUDE_STORAGE_ROOT } from "../claude-paths";
 
 export type FeatureSize = "small" | "medium" | "large" | "xlarge";
 export type DecompositionMode = "all" | "selected";
@@ -35,21 +36,35 @@ export interface FeatureMap {
 
 const FEATURE_MAP_FILE = "feature-map.json";
 
-export function getFeatureMapPath(rootPath: string = FLIGHTPATH_ROOT): string {
+export function getFeatureMapPath(
+  rootPath: string = FLIGHTPATH_ROOT,
+  claudeStorageId?: string
+): string {
+  if (claudeStorageId) {
+    return join(CLAUDE_STORAGE_ROOT, claudeStorageId, FEATURE_MAP_FILE);
+  }
   return join(resolve(rootPath), ".claude", FEATURE_MAP_FILE);
 }
 
 export function getFeatureSpecPath(
   featurePrefix: string,
-  rootPath: string = FLIGHTPATH_ROOT
+  rootPath: string = FLIGHTPATH_ROOT,
+  claudeStorageId?: string
 ): string {
+  if (claudeStorageId) {
+    return join(CLAUDE_STORAGE_ROOT, claudeStorageId, featurePrefix, "feature-spec.v3.json");
+  }
   return join(resolve(rootPath), ".claude", featurePrefix, "feature-spec.v3.json");
 }
 
 export function getSmokeTestsPath(
   featurePrefix: string,
-  rootPath: string = FLIGHTPATH_ROOT
+  rootPath: string = FLIGHTPATH_ROOT,
+  claudeStorageId?: string
 ): string {
+  if (claudeStorageId) {
+    return join(CLAUDE_STORAGE_ROOT, claudeStorageId, featurePrefix, "smoke-tests.json");
+  }
   return join(resolve(rootPath), ".claude", featurePrefix, "smoke-tests.json");
 }
 
@@ -78,9 +93,10 @@ function coerceStringArray(value: unknown): string[] {
 }
 
 export async function loadFeatureMap(
-  rootPath: string = FLIGHTPATH_ROOT
+  rootPath: string = FLIGHTPATH_ROOT,
+  claudeStorageId?: string
 ): Promise<FeatureMap | null> {
-  const featureMapPath = getFeatureMapPath(rootPath);
+  const featureMapPath = getFeatureMapPath(rootPath, claudeStorageId);
   if (!existsSync(featureMapPath)) return null;
 
   try {
@@ -157,11 +173,12 @@ export function sortFeaturesByPriority(
 
 export function getPendingFeatures(
   featureMap: FeatureMap,
-  rootPath: string = FLIGHTPATH_ROOT
+  rootPath: string = FLIGHTPATH_ROOT,
+  claudeStorageId?: string
 ): FeatureMapFeature[] {
   const selected = resolveSelectedFeatures(featureMap);
   return sortFeaturesByPriority(selected).filter((feature) => {
-    const specPath = getFeatureSpecPath(feature.prefix, rootPath);
+    const specPath = getFeatureSpecPath(feature.prefix, rootPath, claudeStorageId);
     return !existsSync(specPath);
   });
 }
