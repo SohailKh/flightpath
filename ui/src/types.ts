@@ -288,6 +288,73 @@ export interface UserInputEntry {
   questions?: AskUserQuestion[];
 }
 
+// ============================================
+// AskUserInput Types (for collecting secrets, files, configuration)
+// ============================================
+
+export type UserInputFieldType = "text" | "secret" | "file" | "boolean";
+
+export interface UserInputFieldBase {
+  id: string;
+  label: string;
+  description?: string;
+  required: boolean;
+}
+
+export interface SecretInputField extends UserInputFieldBase {
+  type: "secret";
+  envVarName: string;
+  formatHint?: string;
+}
+
+export interface FileInputField extends UserInputFieldBase {
+  type: "file";
+  accept?: string[];
+  maxSizeBytes?: number;
+}
+
+export interface TextInputField extends UserInputFieldBase {
+  type: "text";
+  placeholder?: string;
+}
+
+export interface BooleanInputField extends UserInputFieldBase {
+  type: "boolean";
+  trueLabel?: string;
+  falseLabel?: string;
+}
+
+export type UserInputField = SecretInputField | FileInputField | TextInputField | BooleanInputField;
+
+export interface AskUserInputRequest {
+  id: string;
+  header: string;
+  description: string;
+  fields: UserInputField[];
+}
+
+export interface UserInputFileRef {
+  artifactId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+}
+
+export interface UserInputFieldResponse {
+  fieldId: string;
+  value?: string;
+  fileRef?: UserInputFileRef;
+  booleanValue?: boolean;
+  skipped?: boolean;
+}
+
+export interface AskUserInputResponse {
+  requestId: string;
+  fields: UserInputFieldResponse[];
+  respondedAt: string;
+}
+
 export interface Pipeline {
   id: string;
   createdAt: string;
@@ -304,6 +371,10 @@ export interface Pipeline {
   awaitingUserInput: boolean;
   pendingUserQuestions?: AskUserQuestion[];
   userInputLog: UserInputEntry[];
+  /** AskUserInput request awaiting response */
+  pendingUserInputRequest?: AskUserInputRequest;
+  /** Collected AskUserInput responses */
+  userInputResponses?: AskUserInputResponse[];
   /** Whether the pipeline loop is actively running (not persisted - false after server restart) */
   isRunning?: boolean;
 }

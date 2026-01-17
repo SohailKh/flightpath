@@ -4,6 +4,9 @@ import type {
   PipelineSummary,
   ArtifactRef,
   FlowAnalysisResult,
+  AskUserInputRequest,
+  UserInputFieldResponse,
+  UserInputFileRef,
 } from "../types";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8787";
@@ -246,6 +249,72 @@ export async function analyzeFlow(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || "Failed to analyze flow");
+  }
+
+  return response.json();
+}
+
+// ============================================
+// User Input API (AskUserInput)
+// ============================================
+
+export async function getPendingUserInput(
+  pipelineId: string
+): Promise<{ hasPending: boolean; request: AskUserInputRequest | null }> {
+  const response = await fetch(
+    `${BACKEND_URL}/api/pipelines/${pipelineId}/user-input/pending`
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to get pending user input");
+  }
+
+  return response.json();
+}
+
+export async function uploadUserInputFile(
+  pipelineId: string,
+  fieldId: string,
+  file: File
+): Promise<{ success: boolean; fileRef: UserInputFileRef }> {
+  const formData = new FormData();
+  formData.append("fieldId", fieldId);
+  formData.append("file", file);
+
+  const response = await fetch(
+    `${BACKEND_URL}/api/pipelines/${pipelineId}/user-input/upload`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to upload file");
+  }
+
+  return response.json();
+}
+
+export async function submitUserInput(
+  pipelineId: string,
+  requestId: string,
+  fields: UserInputFieldResponse[]
+): Promise<{ ok: boolean }> {
+  const response = await fetch(
+    `${BACKEND_URL}/api/pipelines/${pipelineId}/user-input/submit`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, fields }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to submit user input");
   }
 
   return response.json();

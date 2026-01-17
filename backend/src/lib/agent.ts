@@ -97,6 +97,73 @@ export interface AskUserQuestion {
   multiSelect: boolean;
 }
 
+// ============================================
+// AskUserInput Types (for collecting secrets, files, and configuration)
+// ============================================
+
+export type UserInputFieldType = "text" | "secret" | "file" | "boolean";
+
+export interface UserInputFieldBase {
+  id: string;
+  label: string;
+  description?: string;
+  required: boolean;
+}
+
+export interface SecretInputField extends UserInputFieldBase {
+  type: "secret";
+  envVarName: string;   // Maps to env var (e.g., "FAL_KEY")
+  formatHint?: string;  // Pattern hint (e.g., "sk_...")
+}
+
+export interface FileInputField extends UserInputFieldBase {
+  type: "file";
+  accept?: string[];      // MIME types (e.g., ["audio/*"])
+  maxSizeBytes?: number;
+}
+
+export interface TextInputField extends UserInputFieldBase {
+  type: "text";
+  placeholder?: string;
+}
+
+export interface BooleanInputField extends UserInputFieldBase {
+  type: "boolean";
+  trueLabel?: string;
+  falseLabel?: string;
+}
+
+export type UserInputField = SecretInputField | FileInputField | TextInputField | BooleanInputField;
+
+export interface AskUserInputRequest {
+  id: string;
+  header: string;
+  description: string;
+  fields: UserInputField[];
+}
+
+export interface UserInputFileRef {
+  artifactId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+}
+
+export interface UserInputFieldResponse {
+  fieldId: string;
+  value?: string;              // For text/secret
+  fileRef?: UserInputFileRef;  // For file
+  booleanValue?: boolean;      // For boolean
+  skipped?: boolean;
+}
+
+export interface AskUserInputResponse {
+  requestId: string;
+  fields: UserInputFieldResponse[];
+  respondedAt: string;
+}
+
 /**
  * Result for pipeline agents
  */

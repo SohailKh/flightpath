@@ -18,8 +18,15 @@ import {
   isTerminal as isPipelineTerminal,
   isRunning as isPipelineRunning,
   clearPipelines,
+  getPendingUserInputRequest,
+  addUserInputResponse,
   type Pipeline,
 } from "./lib/pipeline";
+import type { AskUserInputResponse, UserInputFieldResponse, SecretInputField } from "./lib/agent";
+import {
+  storeSecretToEnv,
+  storeUploadedFile,
+} from "./lib/user-inputs";
 import {
   runQAPhase,
   handleUserMessage,
@@ -558,6 +565,264 @@ app.post("/api/pipelines/:id/analyze", async (c) => {
       500
     );
   }
+});
+
+// ============================================
+// User Input API Endpoints (AskUserInput)
+// ============================================
+
+// Get pending user input request
+app.get("/api/pipelines/:id/user-input/pending", (c) => {
+  const pipelineId = c.req.param("id");
+  const pipeline = getPipeline(pipelineId);
+
+  if (!pipeline) {
+    return c.json({ error: "Pipeline not found" }, 404);
+  }
+
+  const pendingRequest = getPendingUserInputRequest(pipelineId);
+  return c.json({
+    hasPending: !!pendingRequest,
+    request: pendingRequest || null,
+  });
+});
+
+// Upload file for a user input field
+app.post("/api/pipelines/:id/user-input/upload", async (c) => {
+  const pipelineId = c.req.param("id");
+  const pipeline = getPipeline(pipelineId);
+
+  if (!pipeline) {
+    return c.json({ error: "Pipeline not found" }, 404);
+  }
+
+  if (!pipeline.claudeStorageId) {
+    return c.json({ error: "Pipeline storage not initialized" }, 400);
+  }
+
+  const pendingRequest = getPendingUserInputRequest(pipelineId);
+  if (!pendingRequest) {
+    return c.json({ error: "No pending user input request" }, 400);
+  }
+
+  try {
+    const formData = await c.req.formData();
+    const fieldId = formData.get("fieldId") as string;
+    const file = formData.get("file") as File;
+
+    if (!fieldId || !file) {
+      return c.json({ error: "fieldId and file are required" }, 400);
+    }
+
+    // Validate that the field exists and is a file field
+    const field = pendingRequest.fields.find((f) => f.id === fieldId);
+    if (!field) {
+      return c.json({ error: `Field ${fieldId} not found in request` }, 400);
+    }
+    if (field.type !== "file") {
+      return c.json({ error: `Field ${fieldId} is not a file field` }, 400);
+    }
+
+    // Check file size if maxSizeBytes is specified
+    if (field.maxSizeBytes && file.size > field.maxSizeBytes) {
+      return c.json({
+        error: `File exceeds maximum size of ${Math.round(field.maxSizeBytes / 1024)}KB`,
+      }, 400);
+    }
+
+    // Check file type if accept is specified
+    if (field.accept && field.accept.length > 0) {
+      const fileType = file.type;
+      const matchesAccept = field.accept.some((pattern) => {
+        if (pattern.endsWith("/*")) {
+          const prefix = pattern.slice(0, -1);
+          return fileType.startsWith(prefix);
+        }
+        return fileType === pattern;
+      });
+      if (!matchesAccept) {
+        return c.json({
+          error: `File type ${fileType} not accepted. Expected: ${field.accept.join(", ")}`,
+        }, 400);
+      }
+    }
+
+    // Store the file
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    const fileRef = storeUploadedFile(
+      pipeline.claudeStorageId,
+      file.name,
+      fileBuffer,
+      file.type
+    );
+
+    console.log(`[API] Uploaded file ${file.name} for field ${fieldId} in pipeline ${pipelineId.slice(0, 8)}`);
+
+    return c.json({
+      success: true,
+      fileRef,
+    });
+  } catch (err) {
+    console.error("[API] File upload error:", err);
+    return c.json(
+      { error: err instanceof Error ? err.message : "Upload failed" },
+      500
+    );
+  }
+});
+
+// Submit user input request schema
+const UserInputFieldResponseSchema = z.object({
+  fieldId: z.string(),
+  value: z.string().optional(),
+  fileRef: z.object({
+    artifactId: z.string(),
+    filename: z.string(),
+    mimeType: z.string(),
+    sizeBytes: z.number(),
+    storagePath: z.string(),
+  }).optional(),
+  booleanValue: z.boolean().optional(),
+  skipped: z.boolean().optional(),
+});
+
+const SubmitUserInputSchema = z.object({
+  requestId: z.string(),
+  fields: z.array(UserInputFieldResponseSchema),
+});
+
+// Submit all user input responses
+app.post("/api/pipelines/:id/user-input/submit", async (c) => {
+  const pipelineId = c.req.param("id");
+  const pipeline = getPipeline(pipelineId);
+
+  if (!pipeline) {
+    return c.json({ error: "Pipeline not found" }, 404);
+  }
+
+  if (!pipeline.claudeStorageId) {
+    return c.json({ error: "Pipeline storage not initialized" }, 400);
+  }
+
+  const pendingRequest = getPendingUserInputRequest(pipelineId);
+  if (!pendingRequest) {
+    return c.json({ error: "No pending user input request" }, 400);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const parsed = SubmitUserInputSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: "Validation error",
+        details: parsed.error.flatten().fieldErrors,
+      },
+      400
+    );
+  }
+
+  const { requestId, fields } = parsed.data;
+
+  if (requestId !== pendingRequest.id) {
+    return c.json({ error: "Request ID mismatch" }, 400);
+  }
+
+  // Validate required fields
+  const missingRequired: string[] = [];
+  for (const field of pendingRequest.fields) {
+    if (field.required) {
+      const response = fields.find((f) => f.fieldId === field.id);
+      if (!response || response.skipped) {
+        missingRequired.push(field.label);
+      } else if (field.type === "text" || field.type === "secret") {
+        if (!response.value || response.value.trim() === "") {
+          missingRequired.push(field.label);
+        }
+      } else if (field.type === "file") {
+        if (!response.fileRef) {
+          missingRequired.push(field.label);
+        }
+      } else if (field.type === "boolean") {
+        if (response.booleanValue === undefined) {
+          missingRequired.push(field.label);
+        }
+      }
+    }
+  }
+
+  if (missingRequired.length > 0) {
+    return c.json({
+      error: `Missing required fields: ${missingRequired.join(", ")}`,
+    }, 400);
+  }
+
+  // Process and store secrets
+  for (const fieldResponse of fields) {
+    const fieldDef = pendingRequest.fields.find((f) => f.id === fieldResponse.fieldId);
+    if (!fieldDef) continue;
+
+    if (fieldDef.type === "secret" && fieldResponse.value) {
+      const secretField = fieldDef as SecretInputField;
+      storeSecretToEnv(
+        pipeline.claudeStorageId,
+        secretField.envVarName,
+        fieldResponse.value
+      );
+    }
+  }
+
+  // Create the response object
+  const response: AskUserInputResponse = {
+    requestId,
+    fields: fields as UserInputFieldResponse[],
+    respondedAt: new Date().toISOString(),
+  };
+
+  // Add the response and clear the pending request
+  addUserInputResponse(pipelineId, response);
+
+  // Emit an event for the response
+  appendEvent(pipelineId, "user_message", {
+    content: `User input provided for: ${pendingRequest.header}`,
+    isUserInput: true,
+    fieldCount: fields.length,
+  });
+
+  console.log(`[API] User input submitted for pipeline ${pipelineId.slice(0, 8)}: ${fields.length} fields`);
+
+  // Resume the pipeline if it was paused
+  resumePipelineState(pipelineId);
+
+  // Get pending requirements and resume with harness if needed
+  const current = getPipeline(pipelineId);
+  if (current) {
+    const pendingRequirements = current.requirements.filter(
+      (r) => r.status === "pending" || r.status === "in_progress"
+    );
+
+    if (pendingRequirements.length > 0) {
+      setTimeout(() => {
+        runHarness({
+          pipelineId,
+          requirements: pendingRequirements,
+          targetProjectPath: current.targetProjectPath || process.cwd(),
+          model: "opus",
+          maxTurns: 500,
+          enablePlaywright: true,
+        }).catch((err: Error) => {
+          console.error("[API] Resume after user input error:", err);
+        });
+      }, 0);
+    }
+  }
+
+  return c.json({ ok: true });
 });
 
 // ============================================

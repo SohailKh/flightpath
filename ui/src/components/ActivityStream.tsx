@@ -20,7 +20,8 @@ interface AgentGroup {
   agentName: string;
   label: string;
   toolCount: number;
-  tokenCount: number;
+  inputTokens: number;
+  outputTokens: number;
   totalCostUsd?: number;
   status: "running" | "done" | "error";
   events: ProcessedEvent[];
@@ -225,7 +226,8 @@ function groupEvents(events: PipelineEvent[], collapsedGroups: Set<string>): Dis
         agentName: promptData.agentName || "unknown",
         label: extractAgentLabel(promptData),
         toolCount: 0,
-        tokenCount: 0,
+        inputTokens: 0,
+        outputTokens: 0,
         totalCostUsd: undefined,
         status: "running",
         events: [],
@@ -293,7 +295,8 @@ function groupEvents(events: PipelineEvent[], collapsedGroups: Set<string>): Dis
     if (event.type === "token_usage") {
       const tokenData = data as unknown as TokenUsageData;
       if (currentGroup) {
-        currentGroup.tokenCount = (tokenData.inputTokens || 0) + (tokenData.outputTokens || 0);
+        currentGroup.inputTokens = tokenData.inputTokens || 0;
+        currentGroup.outputTokens = tokenData.outputTokens || 0;
         currentGroup.totalCostUsd = tokenData.totalCostUsd;
         currentGroup.status = "done";
         groups.push(currentGroup);
@@ -576,10 +579,20 @@ function AgentHeader({ group, onToggle, isCollapsed }: AgentHeaderProps) {
         <span className="font-semibold text-gray-900">{group.label}</span>
         <span className="text-gray-400 mx-2">·</span>
         <span className="text-gray-500">{group.toolCount} tool uses</span>
-        {group.tokenCount > 0 && (
+        {group.inputTokens > 0 && (
           <>
             <span className="text-gray-400 mx-2">·</span>
-            <span className="text-gray-500">{formatTokens(group.tokenCount)} tokens</span>
+            <span className="text-purple-600" title="Input/prompt tokens">
+              {formatTokens(group.inputTokens)} in
+            </span>
+          </>
+        )}
+        {group.outputTokens > 0 && (
+          <>
+            <span className="text-gray-400 mx-1">/</span>
+            <span className="text-gray-500" title="Output tokens">
+              {formatTokens(group.outputTokens)} out
+            </span>
           </>
         )}
         {group.totalCostUsd !== undefined && (

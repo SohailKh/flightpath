@@ -1,4 +1,4 @@
-import type { AskUserQuestion } from "./agent";
+import type { AskUserQuestion, AskUserInputRequest, UserInputField } from "./agent";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org/bot";
 const MAX_MESSAGE_LENGTH = 3800;
@@ -145,6 +145,93 @@ export async function notifyTelegramQuestions(
   } catch (error) {
     console.warn(
       `[Telegram] Failed to send question notification: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+function formatFieldBlock(field: UserInputField, index: number): string {
+  const lines: string[] = [];
+  const requiredHint = field.required ? " (required)" : " (optional)";
+
+  switch (field.type) {
+    case "secret":
+      lines.push(`${index + 1}) 🔑 ${field.label}${requiredHint}`);
+      if (field.description) lines.push(`   ${field.description}`);
+      lines.push(`   Env var: ${field.envVarName}`);
+      if (field.formatHint) lines.push(`   Format: ${field.formatHint}`);
+      break;
+    case "file":
+      lines.push(`${index + 1}) 📎 ${field.label}${requiredHint}`);
+      if (field.description) lines.push(`   ${field.description}`);
+      if (field.accept?.length) lines.push(`   Accepts: ${field.accept.join(", ")}`);
+      if (field.maxSizeBytes) lines.push(`   Max size: ${Math.round(field.maxSizeBytes / 1024)}KB`);
+      break;
+    case "text":
+      lines.push(`${index + 1}) ✏️ ${field.label}${requiredHint}`);
+      if (field.description) lines.push(`   ${field.description}`);
+      if (field.placeholder) lines.push(`   Example: ${field.placeholder}`);
+      break;
+    case "boolean":
+      lines.push(`${index + 1}) ☑️ ${field.label}${requiredHint}`);
+      if (field.description) lines.push(`   ${field.description}`);
+      const trueLabel = field.trueLabel || "Yes";
+      const falseLabel = field.falseLabel || "No";
+      lines.push(`   Options: ${trueLabel} / ${falseLabel}`);
+      break;
+  }
+
+  return lines.join("\n");
+}
+
+function formatUserInputMessage(
+  pipelineId: string,
+  request: AskUserInputRequest
+): string {
+  const lines: string[] = [];
+  const shortId = pipelineId.slice(0, 8);
+  lines.push(`[Flightpath] Input Request (pipeline ${shortId})`);
+  lines.push("");
+  lines.push(`📋 ${request.header}`);
+  if (request.description) {
+    lines.push(request.description);
+  }
+  lines.push("");
+
+  if (request.fields.length === 0) {
+    lines.push("No fields specified in the request.");
+  } else {
+    request.fields.forEach((field, index) => {
+      lines.push(formatFieldBlock(field, index));
+      lines.push("");
+    });
+  }
+
+  lines.push("Please provide the requested inputs via the Flightpath UI.");
+  lines.push("For secrets: paste the value directly (will be stored securely)");
+  lines.push("For files: upload via the UI interface");
+
+  const text = lines.join("\n").trim();
+  if (text.length <= MAX_MESSAGE_LENGTH) {
+    return text;
+  }
+  return text.slice(0, MAX_MESSAGE_LENGTH - 3) + "...";
+}
+
+export async function notifyTelegramUserInput(
+  pipelineId: string,
+  request: AskUserInputRequest
+): Promise<void> {
+  const { token, chatIds } = getTelegramConfig();
+  if (!token || chatIds.length === 0) return;
+
+  const text = formatUserInputMessage(pipelineId, request);
+  try {
+    await Promise.all(chatIds.map((chatId) => sendTelegramMessage(token, chatId, text)));
+  } catch (error) {
+    console.warn(
+      `[Telegram] Failed to send user input notification: ${
         error instanceof Error ? error.message : String(error)
       }`
     );

@@ -6,7 +6,7 @@
  */
 
 import { loadFromFile, saveToFile, clearFile } from "./persistence";
-import type { AskUserQuestion } from "./agent";
+import type { AskUserQuestion, AskUserInputRequest, AskUserInputResponse } from "./agent";
 import {
   backfillProgressLog,
   appendPipelineEventLog,
@@ -189,6 +189,9 @@ export interface Pipeline {
   awaitingUserInput: boolean;
   pendingUserQuestions?: AskUserQuestion[];
   userInputLog: UserInputEntry[];
+  // AskUserInput for collecting secrets, files, and configuration
+  pendingUserInputRequest?: AskUserInputRequest;
+  userInputResponses: AskUserInputResponse[];
   // Target project path (where generated code goes)
   targetProjectPath?: string;
   // Whether the pipeline is bootstrapping a brand new project
@@ -272,6 +275,8 @@ function loadPersistedState(): void {
       pipeline.awaitingUserInput = pipeline.awaitingUserInput ?? false;
       pipeline.userInputLog = pipeline.userInputLog ?? [];
       pipeline.pendingUserQuestions = pipeline.pendingUserQuestions ?? undefined;
+      pipeline.pendingUserInputRequest = pipeline.pendingUserInputRequest ?? undefined;
+      pipeline.userInputResponses = pipeline.userInputResponses ?? [];
       pipeline.qa = pipeline.qa ?? { stage: "map" };
       pipelines.set(id, pipeline);
       subscribers.set(id, new Set());
@@ -334,6 +339,8 @@ export function createPipeline(
     awaitingUserInput: false,
     pendingUserQuestions: undefined,
     userInputLog: [],
+    pendingUserInputRequest: undefined,
+    userInputResponses: [],
     targetProjectPath,
     isNewProject: false,
     completedRequirements: [],
@@ -732,6 +739,75 @@ export function clearUserInputRequest(pipelineId: string): void {
 
   pipeline.awaitingUserInput = false;
   pipeline.pendingUserQuestions = undefined;
+  persistState();
+}
+
+// ============================================
+// AskUserInput Management (for secrets, files, configuration)
+// ============================================
+
+/**
+ * Set a pending AskUserInput request (pauses the agent)
+ */
+export function setAskUserInputRequest(
+  pipelineId: string,
+  request: AskUserInputRequest
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.awaitingUserInput = true;
+  pipeline.pendingUserInputRequest = request;
+  console.log(`[Pipeline] ${pipelineId.slice(0, 8)} waiting for user input: ${request.header}`);
+  persistState();
+}
+
+/**
+ * Get the pending AskUserInput request
+ */
+export function getPendingUserInputRequest(
+  pipelineId: string
+): AskUserInputRequest | undefined {
+  const pipeline = pipelines.get(pipelineId);
+  return pipeline?.pendingUserInputRequest;
+}
+
+/**
+ * Add a response to an AskUserInput request
+ */
+export function addUserInputResponse(
+  pipelineId: string,
+  response: AskUserInputResponse
+): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.userInputResponses.push(response);
+  pipeline.pendingUserInputRequest = undefined;
+  pipeline.awaitingUserInput = false;
+  console.log(`[Pipeline] ${pipelineId.slice(0, 8)} received user input response for request ${response.requestId}`);
+  persistState();
+}
+
+/**
+ * Get all AskUserInput responses for a pipeline
+ */
+export function getUserInputResponses(
+  pipelineId: string
+): AskUserInputResponse[] {
+  const pipeline = pipelines.get(pipelineId);
+  return pipeline?.userInputResponses ?? [];
+}
+
+/**
+ * Clear the pending AskUserInput request without adding a response
+ */
+export function clearAskUserInputRequest(pipelineId: string): void {
+  const pipeline = pipelines.get(pipelineId);
+  if (!pipeline) return;
+
+  pipeline.pendingUserInputRequest = undefined;
+  pipeline.awaitingUserInput = false;
   persistState();
 }
 

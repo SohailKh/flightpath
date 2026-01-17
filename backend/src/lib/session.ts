@@ -27,8 +27,13 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { loadProjectConfig, generateProjectContext } from "./project-config";
 import { rewriteClaudeCommand, rewriteClaudeFilePath } from "./claude-paths";
-import type { AgentName, ToolEventCallbacks, AskUserQuestion } from "./agent";
-import { notifyTelegramQuestions } from "./telegram";
+import type {
+  AgentName,
+  ToolEventCallbacks,
+  AskUserQuestion,
+  AskUserInputRequest,
+} from "./agent";
+import { notifyTelegramQuestions, notifyTelegramUserInput } from "./telegram";
 import { ensureLocalClaudeForToolInput, ensureProjectClaudeLayout } from "./claude-scaffold";
 
 // Flightpath root directory - resolved at module load time
@@ -220,6 +225,11 @@ function formatStatusAction(toolName: string, input: unknown): string {
       if (questions?.[0]?.header) return `Asking: ${questions[0].header}`;
       return "Asking user...";
     }
+    case "AskUserInput": {
+      const header = args.header as string | undefined;
+      if (header) return `Requesting input: ${header}`;
+      return "Requesting user input...";
+    }
     case "start_requirement":
       return `Starting requirement: ${args.id}`;
     case "complete_requirement":
@@ -282,6 +292,12 @@ const CLAUDE_ARTIFACT_FILES = new Set([
   "feature-map.json",
 ]);
 
+// These files should always be at the root of .claude/{storageId}/, not in a subdirectory
+const CLAUDE_ROOT_LEVEL_FILES = new Set([
+  "feature-understanding.json",
+  "feature-map.json",
+]);
+
 function extractFeaturePrefixFromContent(content: unknown): string | null {
   if (typeof content !== "string") return null;
   const match = content.match(/"featurePrefix"\s*:\s*"([^"]+)"/);
@@ -297,6 +313,12 @@ function normalizeArtifactPath(rawPath: string, content?: unknown): string {
 
   const base = normalized.split("/").pop() || normalized;
   if (!CLAUDE_ARTIFACT_FILES.has(base)) return rawPath;
+
+  // Root-level files (feature-understanding.json, feature-map.json) should always
+  // go directly to .claude/{filename}, not .claude/{prefix}/{filename}
+  if (CLAUDE_ROOT_LEVEL_FILES.has(base)) {
+    return `.claude/${base}`;
+  }
 
   let prefix: string | null = null;
   const dir = normalized.slice(0, normalized.length - base.length).replace(/\/$/, "");
@@ -415,7 +437,8 @@ function buildHooks(
   pipelineId?: string,
   sessionCwd?: string,
   claudeStorageId?: string,
-  claudeStorageRootOverride?: string
+  claudeStorageRootOverride?: string,
+  onAskUserInput?: (request: AskUserInputRequest) => void
 ): Partial<Record<HookEvent, HookCallbackMatcher[]>> | undefined {
   const preToolUseHook = async (
     input: HookInput,
@@ -442,12 +465,12 @@ function buildHooks(
     );
 
     toolStartTimes.set(preInput.tool_use_id, Date.now());
-    toolCallbacks.onToolStart?.(
+    toolCallbacks?.onToolStart?.(
       preInput.tool_name,
       resolvedInput,
       preInput.tool_use_id
     );
-    toolCallbacks.onStatusUpdate?.(
+    toolCallbacks?.onStatusUpdate?.(
       formatStatusAction(preInput.tool_name, resolvedInput)
     );
 
@@ -485,6 +508,46 @@ function buildHooks(
       };
     }
 
+    // Intercept AskUserInput to pause agent and collect secrets/files/config
+    if (preInput.tool_name === "AskUserInput") {
+      setRequiresUserInput(true);
+      const toolInput = resolvedInput as AskUserInputRequest;
+
+      // Generate a unique request ID if not provided
+      const request: AskUserInputRequest = {
+        id: toolInput.id || crypto.randomUUID(),
+        header: toolInput.header || "Input Required",
+        description: toolInput.description || "",
+        fields: toolInput.fields || [],
+      };
+
+      // Notify via callback if provided
+      if (onAskUserInput) {
+        onAskUserInput(request);
+      }
+
+      // Notify via Telegram if configured
+      if (pipelineId) {
+        void notifyTelegramUserInput(pipelineId, request);
+      }
+
+      toolCalls.push({
+        name: preInput.tool_name,
+        args: resolvedInput,
+        result: "Input request sent to user. Waiting for response.",
+      });
+
+      return {
+        continue: false,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason:
+            "Input request has been sent to the user. Please wait for their response with secrets, files, or configuration values.",
+        },
+      };
+    }
+
     // Intercept TodoWrite for real-time updates
     if (preInput.tool_name === "TodoWrite") {
       const todoInput = resolvedInput as { todos?: unknown[] };
@@ -518,7 +581,7 @@ function buildHooks(
     const startTime = toolStartTimes.get(postInput.tool_use_id) || Date.now();
     const durationMs = Date.now() - startTime;
     toolStartTimes.delete(postInput.tool_use_id);
-    toolCallbacks.onToolComplete?.(
+    toolCallbacks?.onToolComplete?.(
       postInput.tool_name,
       postInput.tool_input,
       postInput.tool_use_id,
@@ -546,7 +609,7 @@ function buildHooks(
     const failInput = input as PostToolUseFailureHookInput;
 
     toolStartTimes.delete(failInput.tool_use_id);
-    toolCallbacks.onToolError?.(
+    toolCallbacks?.onToolError?.(
       failInput.tool_name,
       failInput.tool_input,
       failInput.tool_use_id,
