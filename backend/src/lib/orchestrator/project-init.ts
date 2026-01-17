@@ -333,7 +333,7 @@ export async function parseRequirementsFromSpec(
       spec.featureName || spec.projectName || spec.name || "untitled-project"
     );
     const resolvedFeaturePrefix = String(
-      spec.featurePrefix || featurePrefix || "untitled"
+      spec.featurePrefix || spec.prefix || featurePrefix || "untitled"
     );
 
     if (!spec.requirements || !Array.isArray(spec.requirements)) {

@@ -87,8 +87,17 @@ function loadFeatureSpec(featurePrefix: string, claudeStorageId?: string): Featu
   }
 
   const featureDir = ensureFeatureDir(featurePrefix, claudeStorageId);
-  const specPath = join(featureDir, "feature-spec.v3.json");
-  if (!existsSync(specPath)) {
+  // Check for both v4 (feature-spec.json) and legacy (feature-spec.v3.json) formats
+  const specFileNames = ["feature-spec.json", "feature-spec.v3.json"];
+  let specPath: string | null = null;
+  for (const fileName of specFileNames) {
+    const candidate = join(featureDir, fileName);
+    if (existsSync(candidate)) {
+      specPath = candidate;
+      break;
+    }
+  }
+  if (!specPath) {
     return null;
   }
 
