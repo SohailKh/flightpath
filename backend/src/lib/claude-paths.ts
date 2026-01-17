@@ -67,8 +67,9 @@ export function resolveClaudeStorageRoot(
   claudeStorageId?: string,
   storageRootOverride?: string
 ): string | null {
-  if (storageRootOverride) return storageRootOverride;
-  return getClaudeStorageRoot(claudeStorageId);
+  if (!claudeStorageId) return storageRootOverride || null;
+  const base = storageRootOverride || CLAUDE_STORAGE_ROOT;
+  return join(base, claudeStorageId);
 }
 
 function normalizePath(value: string): string {

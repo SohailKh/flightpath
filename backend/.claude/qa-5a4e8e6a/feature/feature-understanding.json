@@ -1,0 +1,531 @@
+{
+  "schemaVersion": 1,
+  "projectName": "Piano-to-Sheet",
+  "projectSummary": "A web app that isolates piano from audio files and converts it to readable sheet music",
+  "targetUsers": "Music learners wanting practice sheets, arrangers/transcribers needing starting points, and creators/educators needing quick notation",
+  "coreValue": "Turn piano lines from any song into clean, readable piano sheet music with minimal effort",
+  "mvpScope": "Upload audio, isolate piano via fal.ai, transcribe to MIDI, generate readable sheet music with MusicXML/PDF export",
+  "createdAt": "2025-01-17T00:00:00.000Z",
+  "stack": {
+    "platform": "web",
+    "frontend": "nextjs",
+    "backend": "nodejs",
+    "database": "postgres",
+    "auth": "none",
+    "hosting": "local-docker"
+  },
+  "dependencies": {
+    "packages": [
+      {
+        "name": "next",
+        "reason": "React framework with API routes, file-based routing, and built-in TypeScript support"
+      },
+      {
+        "name": "react",
+        "reason": "UI library for building interactive components"
+      },
+      {
+        "name": "typescript",
+        "reason": "Type safety for frontend and backend code"
+      },
+      {
+        "name": "@fal-ai/client",
+        "reason": "Official fal.ai SDK for calling SAM Audio API with queue support and progress callbacks"
+      },
+      {
+        "name": "bullmq",
+        "reason": "Redis-based job queue for managing long-running transcription jobs"
+      },
+      {
+        "name": "ioredis",
+        "reason": "Redis client required by BullMQ"
+      },
+      {
+        "name": "pg",
+        "reason": "PostgreSQL client for job metadata storage"
+      },
+      {
+        "name": "opensheetmusicdisplay",
+        "reason": "Open-source MusicXML renderer for interactive in-app sheet music display with zoom and cursor navigation"
+      },
+      {
+        "name": "multer",
+        "reason": "Middleware for handling multipart/form-data file uploads"
+      },
+      {
+        "name": "uuid",
+        "reason": "Generate unique job IDs"
+      },
+      {
+        "name": "zod",
+        "reason": "Schema validation for API requests and job settings"
+      }
+    ],
+    "services": [
+      {
+        "name": "fal.ai SAM Audio",
+        "usage": "Piano isolation from mixed audio using text-guided source separation",
+        "envVars": ["FAL_KEY"],
+        "notes": "Uses fal-ai/sam-audio/span-separate endpoint with prompt 'piano playing'. Cost: $0.05 per 30 seconds of output audio. Requires spans parameter for temporal guidance."
+      },
+      {
+        "name": "Redis",
+        "usage": "Job queue backend for BullMQ, tracks job progress and state",
+        "envVars": ["REDIS_URL"],
+        "notes": "Run locally via Docker Compose"
+      },
+      {
+        "name": "PostgreSQL",
+        "usage": "Persistent storage for job metadata, settings, and artifact URLs",
+        "envVars": ["DATABASE_URL"],
+        "notes": "Run locally via Docker Compose"
+      },
+      {
+        "name": "MuseScore CLI",
+        "usage": "Headless MIDI to MusicXML and PDF conversion with engraving",
+        "envVars": [],
+        "notes": "Run in Docker container with xvfb for headless operation. Use QT_QPA_PLATFORM=offscreen environment variable."
+      }
+    ],
+    "apis": [
+      {
+        "name": "fal.ai SAM Audio API",
+        "usage": "Source separation to isolate piano from mixed audio",
+        "envVars": ["FAL_KEY"],
+        "testMode": "Use production key - no test mode available",
+        "docsUrl": "https://fal.ai/models/fal-ai/sam-audio/span-separate/api",
+        "notes": "Authentication via 'Authorization: Key YOUR_FAL_KEY' header. Returns target (isolated piano) and residual (everything else) audio URLs. Max 2 concurrent tasks per user."
+      }
+    ]
+  },
+  "pythonDependencies": {
+    "packages": [
+      {
+        "name": "basic-pitch",
+        "version": ">=0.4.0",
+        "reason": "Spotify's audio-to-MIDI transcription library, lightweight (<20MB memory), faster than real-time"
+      },
+      {
+        "name": "pretty_midi",
+        "reason": "MIDI file manipulation and analysis, used by basic-pitch for output"
+      },
+      {
+        "name": "mido",
+        "reason": "MIDI file reading/writing for post-processing and quantization"
+      },
+      {
+        "name": "music21",
+        "reason": "Music analysis library for MIDI cleanup, quantization, and hand splitting"
+      },
+      {
+        "name": "redis",
+        "reason": "Redis client for Python worker to update job progress"
+      },
+      {
+        "name": "psycopg2-binary",
+        "reason": "PostgreSQL client for Python worker"
+      },
+      {
+        "name": "requests",
+        "reason": "HTTP client for downloading audio files from fal.ai"
+      }
+    ]
+  },
+  "testingPrerequisites": {
+    "envVars": [
+      {
+        "name": "FAL_KEY",
+        "description": "fal.ai API key for SAM Audio source separation",
+        "required": true
+      },
+      {
+        "name": "DATABASE_URL",
+        "description": "PostgreSQL connection string (e.g., postgresql://user:pass@localhost:5432/pianotosheet)",
+        "required": true
+      },
+      {
+        "name": "REDIS_URL",
+        "description": "Redis connection string (e.g., redis://localhost:6379)",
+        "required": true
+      }
+    ],
+    "seedData": [],
+    "fixtures": [
+      {
+        "description": "Sample audio files for testing",
+        "details": "MP3/WAV files with clear piano for testing the full pipeline"
+      }
+    ]
+  },
+  "design": {
+    "references": [],
+    "vibe": "clean, functional, music-focused",
+    "colorMode": "light",
+    "colors": {
+      "accent": "indigo",
+      "style": "muted professional tones, music notation traditionally uses black on white"
+    },
+    "typography": "Modern sans-serif (Inter or system), monospace for technical details",
+    "style": {
+      "borders": "subtle borders for structure",
+      "corners": "rounded-md (moderate rounding)",
+      "spacing": "comfortable spacing, generous room for sheet music display",
+      "density": "not cramped, prioritize readability of sheet music"
+    },
+    "constraints": [
+      "Sheet music viewer needs maximum width for readability",
+      "Controls should not obstruct the score"
+    ],
+    "notes": "Prioritize the sheet music display as the hero element. Audio players and controls should be secondary."
+  },
+  "features": [
+    {
+      "id": "feat-upload",
+      "name": "File Upload",
+      "summary": "Upload audio files and create processing jobs",
+      "userFlows": [
+        "User drags audio file onto upload zone → file validates (format check) → job created → redirect to progress page",
+        "User clicks upload zone → file picker opens → selects file → same flow as drag-drop",
+        "User uploads unsupported format → inline error message, no job created"
+      ],
+      "dataRequirements": [
+        {
+          "entity": "jobs",
+          "fields": "id (uuid), status (enum), progress (int 0-100), input_file_path, isolated_piano_path, midi_path, musicxml_path, pdf_path, settings (jsonb), error_code, error_message, created_at, updated_at",
+          "notes": "Primary table tracking job state through the pipeline"
+        }
+      ],
+      "uiNotes": [
+        "Upload page: large drop zone with dashed border, supported formats hint (mp3, wav, flac, m4a, ogg)",
+        "Quality preset selector: Fast / Balanced / High (maps to readability settings)",
+        "Upload progress bar for large files",
+        "Immediate redirect to job status page after upload completes"
+      ],
+      "edgeCases": [
+        "Unsupported file format → clear error message listing supported formats",
+        "Upload interrupted → allow retry, don't create partial job",
+        "Very large file → show upload progress, no duration limit",
+        "Duplicate upload → create new job (no deduplication)"
+      ],
+      "researchFindings": []
+    },
+    {
+      "id": "feat-isolation",
+      "name": "Piano Isolation",
+      "summary": "Extract piano audio from mixed tracks using fal.ai SAM Audio",
+      "userFlows": [
+        "Job enters ISOLATING state → worker sends audio to fal.ai → polls for completion → downloads target audio → saves to local storage → advances to TRANSCRIBING",
+        "Isolation fails → job marked FAILED with error message → user sees error on status page with retry option"
+      ],
+      "dataRequirements": [
+        {
+          "entity": "jobs.isolated_piano_path",
+          "fields": "string path to isolated piano WAV file",
+          "notes": "Stored in local ./uploads/{job_id}/ directory"
+        }
+      ],
+      "uiNotes": [
+        "Progress page shows 'Isolating piano...' with spinner",
+        "Progress updates as fal.ai queue position changes"
+      ],
+      "edgeCases": [
+        "No piano detected → fal.ai still returns output, may be mostly silent",
+        "Very weak piano signal → output quality degrades gracefully",
+        "fal.ai rate limited (2 concurrent) → jobs queue in BullMQ, processed in order",
+        "fal.ai timeout → retry with exponential backoff, max 3 attempts",
+        "Network error downloading result → retry download, not full isolation"
+      ],
+      "researchFindings": [
+        "fal.ai SAM Audio uses fal-ai/sam-audio/span-separate endpoint",
+        "Requires spans parameter - use full audio duration as single span",
+        "Prompt 'piano playing' for best results",
+        "Returns target (isolated) and residual (background) audio URLs",
+        "Output retained for 7 days on fal.ai servers",
+        "Authentication: 'Authorization: Key YOUR_FAL_KEY' header",
+        "Cost: $0.05 per 30 seconds of output audio"
+      ]
+    },
+    {
+      "id": "feat-transcription",
+      "name": "Audio to MIDI Transcription",
+      "summary": "Convert isolated piano audio to MIDI using Spotify Basic Pitch",
+      "userFlows": [
+        "Job enters TRANSCRIBING state → Python worker loads audio → runs Basic Pitch inference → saves MIDI file → advances to NOTATING",
+        "Transcription fails → job marked FAILED → user sees error with retry option"
+      ],
+      "dataRequirements": [
+        {
+          "entity": "jobs.midi_path",
+          "fields": "string path to transcribed MIDI file",
+          "notes": "Stored in local ./uploads/{job_id}/ directory"
+        }
+      ],
+      "uiNotes": [
+        "Progress page shows 'Transcribing audio...'",
+        "This step is typically fast (faster than real-time)"
+      ],
+      "edgeCases": [
+        "Silent audio → produces empty or near-empty MIDI",
+        "Very dense audio → MIDI may have many overlapping notes",
+        "Audio with artifacts → transcription may include noise as notes"
+      ],
+      "researchFindings": [
+        "Basic Pitch is Spotify's open-source AMT library",
+        "Installation: pip install basic-pitch[tf] for best accuracy",
+        "predict() returns (model_output, midi_data, note_events)",
+        "midi_data is a pretty_midi.PrettyMIDI object, call .write() to save",
+        "Configurable thresholds: onset_threshold (0.5), frame_threshold (0.3)",
+        "minimum_note_length defaults to 127.7ms",
+        "melodia_trick=True improves output quality",
+        "Peak memory usage <20MB, faster than real-time on modern hardware",
+        "Supports mp3, wav, flac, ogg, m4a input formats"
+      ]
+    },
+    {
+      "id": "feat-notation",
+      "name": "MIDI to Sheet Music",
+      "summary": "Convert MIDI to readable MusicXML and PDF with readability processing",
+      "userFlows": [
+        "Job enters NOTATING state → Python worker applies readability processing to MIDI → converts to MusicXML via MuseScore → generates PDF → job marked DONE",
+        "User adjusts readability settings → triggers regeneration → new MusicXML/PDF generated without re-isolation or re-transcription"
+      ],
+      "dataRequirements": [
+        {
+          "entity": "jobs.musicxml_path",
+          "fields": "string path to MusicXML file",
+          "notes": "Primary notation format for in-app display"
+        },
+        {
+          "entity": "jobs.pdf_path",
+          "fields": "string path to engraved PDF file",
+          "notes": "Print-ready output"
+        },
+        {
+          "entity": "jobs.settings",
+          "fields": "jsonb with readability settings: quantization_grid, simplification_level, min_note_duration_ms, velocity_threshold, hand_split_note, tempo_bpm",
+          "notes": "Persisted for regeneration"
+        }
+      ],
+      "uiNotes": [
+        "Progress page shows 'Generating sheet music...'",
+        "Settings panel for readability controls appears after initial generation"
+      ],
+      "edgeCases": [
+        "MIDI too complex → sheet may be dense, user can increase simplification",
+        "MuseScore conversion fails → return MIDI as partial result",
+        "Regeneration requested → version artifacts, don't overwrite originals"
+      ],
+      "researchFindings": [
+        "MuseScore CLI runs headless with QT_QPA_PLATFORM=offscreen and xvfb",
+        "Command: mscore -o output.pdf input.mid (format from extension)",
+        "MIDI to MusicXML: mscore -o output.musicxml input.mid",
+        "Docker with AppImage extraction is most reliable approach",
+        "Add timeout protection (60-120s) for production",
+        "MuseScore exports vector PDFs - high quality at any size"
+      ]
+    },
+    {
+      "id": "feat-viewer",
+      "name": "Sheet Music Viewer",
+      "summary": "Interactive in-app display of generated sheet music with controls",
+      "userFlows": [
+        "User views results page → MusicXML loads in OpenSheetMusicDisplay → sheet music renders",
+        "User zooms in/out → sheet re-renders at new scale",
+        "User enables cursor → cursor appears, can navigate note by note",
+        "User scrolls → continuous scroll through pages"
+      ],
+      "dataRequirements": [],
+      "uiNotes": [
+        "Full-width sheet music container with horizontal scroll for wide scores",
+        "Zoom controls: +/- buttons or slider (50% to 200%)",
+        "Optional cursor for note-by-note navigation",
+        "Page/measure indicators for long pieces",
+        "Dark mode support via OSMD options"
+      ],
+      "edgeCases": [
+        "Very long score → may have initial render delay, show loading state",
+        "Invalid MusicXML → show error message, offer MIDI download as fallback",
+        "Browser resize → auto-resize with OSMD autoResize option"
+      ],
+      "researchFindings": [
+        "OpenSheetMusicDisplay (OSMD) is the standard open-source MusicXML renderer",
+        "npm install opensheetmusicdisplay",
+        "Must use dynamic import with ssr: false in Next.js",
+        "Load via osmd.load(musicXmlString) or osmd.load(url)",
+        "osmd.zoom = 1.5 for 150% zoom, then osmd.render()",
+        "Cursor support via cursorsOptions with configurable colors",
+        "Current version: 1.9.3 (actively maintained)",
+        "drawingParameters: 'compacttight' for faster rendering"
+      ]
+    },
+    {
+      "id": "feat-export",
+      "name": "Export & Download",
+      "summary": "Download generated artifacts in multiple formats",
+      "userFlows": [
+        "User clicks PDF download → browser downloads PDF file",
+        "User clicks MusicXML download → browser downloads .musicxml file",
+        "User clicks MIDI download → browser downloads .mid file",
+        "User clicks isolated piano download → browser downloads isolated audio WAV"
+      ],
+      "dataRequirements": [],
+      "uiNotes": [
+        "Export buttons grouped together below sheet music viewer",
+        "Show file sizes if available",
+        "Disable buttons until artifacts are ready"
+      ],
+      "edgeCases": [
+        "Partial failure → show available downloads, grey out unavailable",
+        "File no longer exists → show error, suggest re-running job"
+      ],
+      "researchFindings": []
+    },
+    {
+      "id": "feat-readability",
+      "name": "Readability Controls",
+      "summary": "User-adjustable settings for sheet music quality and regeneration",
+      "userFlows": [
+        "User views initial sheet music → opens settings panel → adjusts quantization/simplification → clicks 'Regenerate' → new sheet music generated",
+        "Settings persisted so user can fine-tune iteratively"
+      ],
+      "dataRequirements": [
+        {
+          "entity": "readability_settings",
+          "fields": "quantization_grid (enum: 1/8, 1/16, 1/32), simplification_level (enum: simple, medium, exact), min_note_duration_ms (int), velocity_threshold (int 0-127), hand_split_note (int MIDI note), tempo_bpm (int or null for auto)",
+          "notes": "Stored in jobs.settings jsonb column"
+        }
+      ],
+      "uiNotes": [
+        "Collapsible settings panel on results page",
+        "Quantization grid: dropdown with 1/8, 1/16, 1/32 options",
+        "Simplification level: radio buttons or dropdown",
+        "Advanced settings (expandable): min note duration, velocity threshold, hand split point, tempo override",
+        "Regenerate button with loading state"
+      ],
+      "edgeCases": [
+        "Invalid settings combination → validation with helpful error",
+        "Regeneration while one is in progress → queue or reject with message"
+      ],
+      "researchFindings": [
+        "music21 library provides quantization and voice separation",
+        "Hand splitting typically uses middle C (MIDI note 60) as default split point",
+        "Quantization should snap notes to nearest grid value",
+        "Velocity threshold filters out very quiet notes (likely noise)"
+      ]
+    },
+    {
+      "id": "feat-progress",
+      "name": "Job Progress & Status",
+      "summary": "Real-time job status tracking with clear pipeline visualization",
+      "userFlows": [
+        "User submits upload → redirected to job page → sees stepper with current stage highlighted",
+        "Job progresses → stepper updates, progress percentage shown",
+        "Job completes → stepper shows all complete, results appear",
+        "Job fails → stepper shows failed stage, error message displayed, retry button available"
+      ],
+      "dataRequirements": [
+        {
+          "entity": "job_states",
+          "fields": "UPLOADED, ISOLATING, TRANSCRIBING, NOTATING, DONE, FAILED",
+          "notes": "Enum for job.status column"
+        }
+      ],
+      "uiNotes": [
+        "Horizontal stepper showing: Upload → Isolate → Transcribe → Notate → Done",
+        "Current step highlighted/animated",
+        "Progress percentage below current step",
+        "Estimated time remaining (if calculable)",
+        "Error state: red highlight on failed step with error message",
+        "Retry button on failure"
+      ],
+      "edgeCases": [
+        "Page refresh → fetch current job state, resume display",
+        "Job stuck → implement timeout detection, allow manual retry",
+        "Lost connection → reconnect polling, show connection status"
+      ],
+      "researchFindings": []
+    },
+    {
+      "id": "feat-playback",
+      "name": "Audio Playback",
+      "summary": "Play original and isolated piano audio for comparison",
+      "userFlows": [
+        "User on results page → clicks play on original audio → audio plays",
+        "User clicks play on isolated piano → isolated audio plays",
+        "User can pause, seek, adjust volume"
+      ],
+      "dataRequirements": [],
+      "uiNotes": [
+        "Two audio players: 'Original' and 'Isolated Piano'",
+        "Simple waveform or just standard audio controls",
+        "Positioned above the sheet music viewer"
+      ],
+      "edgeCases": [
+        "Audio file not yet available → disable player, show loading",
+        "Browser audio blocked → show message about autoplay policy"
+      ],
+      "researchFindings": []
+    }
+  ],
+  "architecture": {
+    "overview": "Docker Compose orchestration with Next.js frontend/API, Python worker for audio processing, Redis for job queue, PostgreSQL for metadata, local filesystem for artifacts",
+    "components": [
+      {
+        "name": "Next.js App",
+        "responsibility": "Frontend UI, API routes for job creation and status, serves static files",
+        "technology": "Next.js 14+, React 18, TypeScript"
+      },
+      {
+        "name": "Python Worker",
+        "responsibility": "Processes job queue: calls fal.ai, runs Basic Pitch, executes MuseScore, applies readability transforms",
+        "technology": "Python 3.10+, basic-pitch, music21, Redis connection"
+      },
+      {
+        "name": "MuseScore Container",
+        "responsibility": "Headless MIDI to MusicXML/PDF conversion",
+        "technology": "MuseScore 4 AppImage in Ubuntu container with xvfb"
+      },
+      {
+        "name": "Redis",
+        "responsibility": "BullMQ job queue backend",
+        "technology": "Redis 7"
+      },
+      {
+        "name": "PostgreSQL",
+        "responsibility": "Job metadata persistence",
+        "technology": "PostgreSQL 15"
+      }
+    ],
+    "dataFlow": "Upload → API creates job in Postgres, queues in Redis → Worker picks up, calls fal.ai for isolation → Worker runs Basic Pitch for MIDI → Worker applies readability processing → Worker calls MuseScore for MusicXML/PDF → Worker updates job status → Frontend polls for completion → User views results"
+  },
+  "dockerCompose": {
+    "services": [
+      {
+        "name": "web",
+        "description": "Next.js frontend and API",
+        "ports": ["3000:3000"],
+        "dependsOn": ["redis", "postgres"]
+      },
+      {
+        "name": "worker",
+        "description": "Python worker for audio processing pipeline",
+        "dependsOn": ["redis", "postgres", "musescore"]
+      },
+      {
+        "name": "musescore",
+        "description": "Headless MuseScore for notation conversion",
+        "notes": "Custom Dockerfile with MuseScore AppImage and xvfb"
+      },
+      {
+        "name": "redis",
+        "description": "Job queue backend",
+        "ports": ["6379:6379"]
+      },
+      {
+        "name": "postgres",
+        "description": "Job metadata database",
+        "ports": ["5432:5432"]
+      }
+    ]
+  }
+}

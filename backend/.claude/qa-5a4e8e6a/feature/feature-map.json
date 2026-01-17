@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "projectName": "Piano-to-Sheet",
+  "projectSummary": "A web app that isolates piano from audio files and converts it to readable sheet music",
+  "stack": {
+    "platform": "web",
+    "frontend": "nextjs",
+    "backend": "nodejs",
+    "database": "postgres",
+    "auth": "none"
+  },
+  "generatedAt": "2025-01-17T00:00:00.000Z",
+  "features": [
+    {
+      "id": "feat-upload",
+      "name": "File Upload",
+      "prefix": "upload",
+      "summary": "Upload audio files and create processing jobs",
+      "priority": 1,
+      "dependencies": []
+    },
+    {
+      "id": "feat-progress",
+      "name": "Job Progress & Status",
+      "prefix": "progress",
+      "summary": "Real-time job status tracking with pipeline visualization",
+      "priority": 1,
+      "dependencies": ["feat-upload"]
+    },
+    {
+      "id": "feat-isolation",
+      "name": "Piano Isolation",
+      "prefix": "isolation",
+      "summary": "Extract piano audio from mixed tracks using fal.ai SAM Audio",
+      "priority": 2,
+      "dependencies": ["feat-upload"]
+    },
+    {
+      "id": "feat-transcription",
+      "name": "Audio to MIDI Transcription",
+      "prefix": "transcription",
+      "summary": "Convert isolated piano audio to MIDI using Spotify Basic Pitch",
+      "priority": 3,
+      "dependencies": ["feat-isolation"]
+    },
+    {
+      "id": "feat-notation",
+      "name": "MIDI to Sheet Music",
+      "prefix": "notation",
+      "summary": "Convert MIDI to readable MusicXML and PDF with readability processing",
+      "priority": 4,
+      "dependencies": ["feat-transcription"]
+    },
+    {
+      "id": "feat-viewer",
+      "name": "Sheet Music Viewer",
+      "prefix": "viewer",
+      "summary": "Interactive in-app display of generated sheet music",
+      "priority": 5,
+      "dependencies": ["feat-notation"]
+    },
+    {
+      "id": "feat-export",
+      "name": "Export & Download",
+      "prefix": "export",
+      "summary": "Download generated artifacts in PDF, MusicXML, and MIDI formats",
+      "priority": 5,
+      "dependencies": ["feat-notation"]
+    },
+    {
+      "id": "feat-playback",
+      "name": "Audio Playback",
+      "prefix": "playback",
+      "summary": "Play original and isolated piano audio for comparison",
+      "priority": 6,
+      "dependencies": ["feat-isolation"]
+    },
+    {
+      "id": "feat-readability",
+      "name": "Readability Controls",
+      "prefix": "readability",
+      "summary": "User-adjustable settings for sheet music quality and regeneration",
+      "priority": 7,
+      "dependencies": ["feat-notation", "feat-viewer"]
+    }
+  ]
+}

@@ -10,6 +10,7 @@ You are a UI/UX design system expert. Your job is to take design preferences cap
 ## Input
 
 You will receive design preferences including:
+
 - Reference apps/websites the user likes
 - Visual style preferences (vibe, colors, typography)
 - Any brand constraints (existing logo, colors, etc.)
@@ -29,7 +30,7 @@ The skill should be practical and actionable — not abstract design theory. Inc
 
 ## Example Output
 
-```markdown
+````markdown
 # Design System
 
 Use this skill when building UI components to ensure consistent styling across the app.
@@ -38,14 +39,12 @@ Use this skill when building UI components to ensure consistent styling across t
 
 These apps inspire our visual design:
 
-- **Linear** (linear.app) — Clean minimal UI, muted colors, excellent use of whitespace
-- **Vercel Dashboard** — Dark mode done right, subtle gradients, professional feel
-
 When unsure about a design decision, ask: "How would Linear do this?"
 
 ## Color Palette
 
 ### Light Mode
+
 - **Background**: `bg-white` / `bg-gray-50` for sections
 - **Surface**: `bg-white` with `border border-gray-200`
 - **Text Primary**: `text-gray-900`
@@ -55,6 +54,7 @@ When unsure about a design decision, ask: "How would Linear do this?"
 - **Error**: `text-red-600`
 
 ### Dark Mode (if applicable)
+
 - **Background**: `bg-gray-950` / `bg-gray-900` for sections
 - **Surface**: `bg-gray-900` with `border border-gray-800`
 - **Text Primary**: `text-gray-100`
@@ -78,29 +78,41 @@ When unsure about a design decision, ask: "How would Linear do this?"
 ## Components
 
 ### Buttons
+
 ```html
 <!-- Primary -->
-<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm">
+<button
+  class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm"
+>
   Save
 </button>
 
 <!-- Secondary -->
-<button class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium text-sm">
+<button
+  class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium text-sm"
+>
   Cancel
 </button>
 
 <!-- Ghost -->
-<button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium text-sm">
+<button
+  class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium text-sm"
+>
   Settings
 </button>
 ```
+````
 
 ### Inputs
+
 ```html
-<input class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+<input
+  class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+/>
 ```
 
 ### Cards
+
 ```html
 <div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
   <!-- content -->
@@ -121,6 +133,7 @@ When unsure about a design decision, ask: "How would Linear do this?"
 - No ALL CAPS text except for tiny labels
 - No emoji in professional UI
 - No gradient backgrounds on interactive elements
+
 ```
 
 ## Process
@@ -139,3 +152,4 @@ When unsure about a design decision, ask: "How would Linear do this?"
 - If dark mode is mentioned, include both color schemes
 - Default to Tailwind classes for web projects (most common)
 - Keep it concise — this will be read by an AI agent, not a design team
+```
